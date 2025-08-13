@@ -1,0 +1,22 @@
+@host = localhost
+@httpPort = 5233
+@httpsPort = 5001
+@httpBase = http://{{host}}:{{httpPort}}
+@httpsBase = https://{{host}}:{{httpsPort}}
+
+### Health check over HTTP
+GET {{httpBase}}/api/healthz
+
+### Health check over HTTPS
+GET {{httpsBase}}/api/healthz
+
+### T1
+POST {{httpBase}}/mcp
+Content-Type: application/json
+
+{
+   "jsonrpc": "2.0",
+   "id": 1,
+   "method": "mcp_list_tools",
+   "params": {}
+}

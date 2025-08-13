@@ -1,0 +1,96 @@
+#
+# == Required GitHub Repository Configuration ==
+#
+# --- Repository Variables (vars) ---
+#
+# CONTAINER_REGISTRY_NAME:
+#   The unique name of your Azure Container Registry (ACR), without the domain.
+#   Example: myregistry
+#
+# CONTAINER_REPOSITORY_NAME:
+#   The name of the repository within your ACR where the image will be stored.
+#   Example: my-web-app
+#
+# AZURE_RESOURCE_GROUP:
+#   The name of the Azure Resource Group containing your Container App.
+#   Example: production-resources
+#
+# AZURE_CONTAINER_APP_NAME:
+#   The name of the Azure Container App to deploy to.
+#   Example: my-prod-container-app
+#
+# --- Repository Secrets (secrets) ---
+#
+# AZURE_CLIENT_ID:
+#   The Client ID of the Azure AD Service Principal configured for OIDC authentication.
+#
+# AZURE_TENANT_ID:
+#   The Tenant ID of your Azure Active Directory.
+#
+# AZURE_SUBSCRIPTION_ID:
+#   The ID of the Azure subscription containing your resources.
+#
+
+name: Build, Push and Deploy to Azure Container Apps
+
+on:
+  push:
+    branches:
+      - 'main'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  CONTAINER_REGISTRY_NAME: ${{ vars.CONTAINER_REGISTRY_NAME }}
+  CONTAINER_REPOSITORY_NAME: ${{ vars.CONTAINER_REPOSITORY_NAME }}
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name ${{ env.CONTAINER_REGISTRY_NAME }}
+
+      - name: Set datetime tag 🗓️
+        id: dt
+        run: echo "tag=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Dynamically construct the image path
+          images: ${{ env.CONTAINER_REGISTRY_NAME }}.azurecr.io/${{ env.CONTAINER_REPOSITORY_NAME }}
+          tags: |
+            type=raw,value=${{ steps.dt.outputs.tag }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Deploy to Azure Container App 🚀
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          resourceGroup: ${{ env.AZURE_RESOURCE_GROUP }}
+          containerAppName: ${{ env.AZURE_CONTAINER_APP_NAME }}
+          # Dynamically construct the full image name to deploy
+          imageToDeploy: ${{ env.CONTAINER_REGISTRY_NAME }}.azurecr.io/${{ env.CONTAINER_REPOSITORY_NAME }}:${{ steps.dt.outputs.tag }}

@@ -416,3 +416,5 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+mcp-server-hub/appsettings.Development.json
+dotnet/appsettings.Development.json

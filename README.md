@@ -5,12 +5,48 @@ Minimal .NET 8 remote MCP server using Streamable HTTP transport.
 ## Features
 - Streamable HTTP + legacy SSE endpoints via `app.MapMcp()`
 - Health probe at `/api/healthz`
+- Optional API key authentication
 - OpenTelemetry wiring (traces + metrics + logs) – add an OTLP endpoint via env vars later
 - Dockerfile exposing port 8080 (container) / configurable via `ASPNETCORE_URLS`
 
 ## Prerequisites
 - .NET 8 SDK
 - (Optional) Docker
+
+## API Key Authentication
+
+The server supports optional API key authentication. When an API key is configured, all requests (except health checks) must include the `X-API-Key` header with a valid API key.
+
+### Configuration
+
+Set the API key via configuration:
+
+**appsettings.json:**
+```json
+{
+  "ApiKey": "your-secret-api-key-here"
+}
+```
+
+**Environment variable:**
+```bash
+export ApiKey="your-secret-api-key-here"
+```
+
+**For Docker:**
+```bash
+docker run -p 8080:8080 -e ApiKey="your-secret-api-key-here" mcp-server-hub
+```
+
+### Usage
+
+If an API key is configured, include it in all requests:
+
+```bash
+curl -H "X-API-Key: your-secret-api-key-here" http://localhost:5000/mcp/sse
+```
+
+**Note:** If no API key is configured in the settings, authentication is disabled and requests proceed without validation.
 
 ## Run locally
 ```
@@ -68,5 +104,5 @@ OTEL_SERVICE_NAME=mcp-server-hub
 
 ## Next steps
 - Implement real tools (domain-specific logic)
-- Add authorization / API keys once supported
 - Add integration tests for tool methods
+- Consider rate limiting for production use

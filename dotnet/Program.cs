@@ -42,6 +42,9 @@ builder.Services.AddScoped<WeatherTools>();
 
 var app = builder.Build();
 
+// Add API key middleware
+app.UseMiddleware<mcp_server_hub.ApiKeyMiddleware>();
+
 app.MapGet("/api/healthz", () => Results.Ok("Healthy"));
 
 app.MapMcp();

@@ -39,6 +39,7 @@ builder.Services.AddHttpClient("WeatherAPI", client =>
 
 builder.Services.AddScoped<TimeTools>();
 builder.Services.AddScoped<WeatherTools>();
+builder.Services.AddScoped<YouTubeTools>();
 
 var app = builder.Build();
 

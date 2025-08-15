@@ -90,6 +90,44 @@ public static EchoResult Echo(string message) => new(message, DateTimeOffset.Utc
 public record EchoResult(string Message, DateTimeOffset Timestamp);
 ```
 
+## YouTube ➜ MP3 tool (transcription-ready)
+
+This repo includes a tool that downloads a YouTube video's audio and converts it to an MP3 optimized for transcription (16 kHz mono, 64 kbps by default).
+
+### Dependencies
+- NuGet packages (already added):
+  - YoutubeExplode
+  - FFMpegCore
+- FFmpeg binary on PATH or placed alongside the app binaries
+
+### FFmpeg setup (Windows)
+1. Download a static build from https://ffmpeg.org/download.html (or gyan.dev/ffmpeg/builds/).
+2. Extract and locate `ffmpeg.exe` (and optionally `ffprobe.exe`).
+3. Place `ffmpeg.exe` in the app's output folder so the server can find it at runtime:
+	- Debug: `./dotnet/bin/Debug/net8.0/`
+	- Release/publish: the folder with `mcp-server-hub.dll`
+
+The tool looks in `AppContext.BaseDirectory` for ffmpeg.
+
+### Call from MCP
+1. List tools to discover the exact tool name:
+	- POST `tools/list` (see `requests.http`).
+2. Call the tool with `tools/call` using the returned name and arguments below.
+
+Arguments for the method:
+- `url` (string, required): YouTube video URL
+- `outputPath` (string, optional): File name or full path for the MP3. If only a file name is given, it saves to the app output directory.
+- `sampleRateHz` (int, optional, default 16000)
+- `channels` (int, optional, default 1)
+- `bitrateKbps` (int, optional, default 64)
+
+Returns:
+- `outputPath` (string): Absolute path to the saved MP3
+- `title` (string): Video title
+- `duration` (TimeSpan?): Approximate video duration
+
+Note: Ensure you comply with YouTube's Terms of Service and applicable law when downloading content.
+
 ## OpenTelemetry export (optional)
 Set environment variables (example for OTLP gRPC):
 ```

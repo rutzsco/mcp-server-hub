@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FFMpegCore" Version="5.2.0" />
     <PackageReference Include="ModelContextProtocol" Version="0.3.0-preview.3" />
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.3.0-preview.3" />
     <PackageReference Include="ModelContextProtocol.Core" Version="0.3.0-preview.3" />
@@ -15,6 +16,7 @@
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.12.0" />
+    <PackageReference Include="YoutubeExplode" Version="6.5.4" />
   </ItemGroup>
 
 </Project>

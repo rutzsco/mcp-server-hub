@@ -26,80 +26,50 @@ namespace mcp_server_hub.Utilities
 
     public static class MediaUtils
     {
+        // Configuration constants
+        private static class Config
+        {
+            public const int DefaultSampleRate = 16000;
+            public const int DefaultChannels = 1;
+            public const int DefaultBitrate = 32;
+            public const string DefaultFileExtension = ".mp3";
+            public const string AudioCodec = "libmp3lame";
+            public const string DefaultFileName = "youtube_audio";
+        }
+
         private static readonly Regex YouTubeRegex = new(
             @"^(https?://)?(www\.)?(youtube\.com|youtu\.be)/",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private static readonly Regex FileNameCleanupRegex = new(
+            $"[{Regex.Escape(new string(Path.GetInvalidFileNameChars()))}]+",
+            RegexOptions.Compiled);
+
+        static MediaUtils()
+        {
+            // Configure FFmpeg once during static initialization
+            GlobalFFOptions.Configure(new FFOptions
+            {
+                BinaryFolder = AppContext.BaseDirectory
+            });
+        }
 
         public static bool IsYouTubeUrl(string url)
             => !string.IsNullOrWhiteSpace(url) && YouTubeRegex.IsMatch(url);
 
         public static async Task<YouTubeToMp3Result> DownloadYouTubeToMp3Async(YouTubeToMp3Request request)
         {
-            if (request is null) throw new ArgumentNullException(nameof(request));
-            if (string.IsNullOrWhiteSpace(request.Url)) throw new ArgumentException("Url is required", nameof(request.Url));
+            ValidateRequest(request);
 
-            var sampleRate = request.SampleRateHz ?? 16000;
-            var channels = request.Channels ?? 1;
-            var bitrate = request.BitrateKbps ?? 32;
-
-            // Ensure ffmpeg binaries are discoverable. Expect ffmpeg(.exe) to be placed in the app's base directory.
-            GlobalFFOptions.Configure(new FFOptions
-            {
-                BinaryFolder = AppContext.BaseDirectory
-            });
-
+            var audioSettings = ExtractAudioSettings(request);
             var youtube = new YoutubeClient();
-
-            // Get video metadata and best audio-only stream
-            var video = await youtube.Videos.GetAsync(request.Url);
-            var manifest = await youtube.Videos.Streams.GetManifestAsync(request.Url);
-            var audio = manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
-            if (audio is null)
-            {
-                throw new InvalidOperationException("No audio-only streams found for the provided URL.");
-            }
-
-            // Build output path
-            var baseDir = AppContext.BaseDirectory;
-            var safeTitle = SanitizeFileName(video?.Title ?? "youtube_audio");
-            var defaultFileName = $"{safeTitle}_16khz_mono.mp3";
-
-            string outputPath;
-            if (string.IsNullOrWhiteSpace(request.OutputPath))
-            {
-                outputPath = Path.Combine(baseDir, defaultFileName);
-            }
-            else
-            {
-                var provided = request.OutputPath;
-                if (!Path.IsPathRooted(provided!) && provided!.IndexOf(Path.DirectorySeparatorChar) < 0 && provided!.IndexOf(Path.AltDirectorySeparatorChar) < 0)
-                {
-                    outputPath = Path.Combine(baseDir, provided!);
-                }
-                else
-                {
-                    outputPath = Path.GetFullPath(provided!);
-                }
-            }
-
-            Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-
-            // Download to a temp file
-            var tempFile = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
 
             try
             {
-                await youtube.Videos.Streams.DownloadAsync(audio, tempFile);
-
-                // Convert and downsample
-                await FFMpegArguments
-                    .FromFileInput(tempFile)
-                    .OutputToFile(outputPath, true, options => options
-                        .WithAudioCodec("libmp3lame")
-                        .WithAudioSamplingRate(sampleRate)
-                        .WithCustomArgument($"-ac {channels}")
-                        .WithAudioBitrate(bitrate))
-                    .ProcessAsynchronously();
+                var (video, audioStream) = await GetVideoAndAudioStreamAsync(youtube, request.Url).ConfigureAwait(false);
+                var outputPath = DetermineOutputPath(request.OutputPath, video?.Title);
+                
+                await DownloadAndConvertAudioAsync(youtube, audioStream, outputPath, audioSettings).ConfigureAwait(false);
 
                 return new YouTubeToMp3Result(
                     OutputPath: outputPath,
@@ -107,43 +77,157 @@ namespace mcp_server_hub.Utilities
                     Duration: video?.Duration
                 );
             }
-            finally
+            catch (Exception ex)
             {
-                if (File.Exists(tempFile))
-                {
-                    try { File.Delete(tempFile); } catch { /* ignore */ }
-                }
+                throw new InvalidOperationException($"Failed to download and convert YouTube video: {ex.Message}", ex);
             }
         }
 
         public static async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
         {
-            if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("URL is required", nameof(url));
+            if (string.IsNullOrWhiteSpace(url))
+                throw new ArgumentException("URL is required", nameof(url));
 
-            var tempDir = Path.GetTempPath();
-            var name = !string.IsNullOrWhiteSpace(fileNameHint) ? SanitizeFileName(fileNameHint!) : Path.GetRandomFileName();
-            if (!name.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+            var fileName = BuildDownloadFileName(fileNameHint);
+            var destPath = Path.Combine(Path.GetTempPath(), fileName);
+
+            try
             {
-                name += ".mp3";
+                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+
+                await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                await using var output = File.Create(destPath);
+                await input.CopyToAsync(output).ConfigureAwait(false);
+
+                return destPath;
+            }
+            catch (Exception ex)
+            {
+                // Clean up partial file on failure
+                if (File.Exists(destPath))
+                {
+                    try { File.Delete(destPath); } catch { /* ignore cleanup errors */ }
+                }
+                throw new InvalidOperationException($"Failed to download file from {url}: {ex.Message}", ex);
+            }
+        }
+
+        private static void ValidateRequest(YouTubeToMp3Request request)
+        {
+            if (request is null)
+                throw new ArgumentNullException(nameof(request));
+            if (string.IsNullOrWhiteSpace(request.Url))
+                throw new ArgumentException("Url is required", nameof(request.Url));
+            if (!IsYouTubeUrl(request.Url))
+                throw new ArgumentException("Invalid YouTube URL format", nameof(request.Url));
+        }
+
+        private static (int SampleRate, int Channels, int Bitrate) ExtractAudioSettings(YouTubeToMp3Request request)
+        {
+            return (
+                SampleRate: request.SampleRateHz ?? Config.DefaultSampleRate,
+                Channels: request.Channels ?? Config.DefaultChannels,
+                Bitrate: request.BitrateKbps ?? Config.DefaultBitrate
+            );
+        }
+
+        private static async Task<(YoutubeExplode.Videos.Video? Video, IStreamInfo AudioStream)> GetVideoAndAudioStreamAsync(
+            YoutubeClient youtube, string url)
+        {
+            var video = await youtube.Videos.GetAsync(url).ConfigureAwait(false);
+            var manifest = await youtube.Videos.Streams.GetManifestAsync(url).ConfigureAwait(false);
+            var audioStream = manifest.GetAudioOnlyStreams().GetWithHighestBitrate();
+
+            if (audioStream is null)
+                throw new InvalidOperationException("No audio-only streams found for the provided URL.");
+
+            return (video, audioStream);
+        }
+
+        private static string DetermineOutputPath(string? requestedPath, string? videoTitle)
+        {
+            var baseDir = AppContext.BaseDirectory;
+            var safeTitle = SanitizeFileName(videoTitle ?? Config.DefaultFileName);
+            var defaultFileName = $"{safeTitle}_16khz_mono{Config.DefaultFileExtension}";
+
+            if (string.IsNullOrWhiteSpace(requestedPath))
+            {
+                return Path.Combine(baseDir, defaultFileName);
             }
 
-            var destPath = Path.Combine(tempDir, name);
+            // If it's just a filename (no directory separators), combine with base directory
+            if (IsSimpleFileName(requestedPath))
+            {
+                return Path.Combine(baseDir, requestedPath);
+            }
 
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
+            // Otherwise, treat as full or relative path
+            return Path.GetFullPath(requestedPath);
+        }
 
-            await using var input = await response.Content.ReadAsStreamAsync();
-            await using var output = File.Create(destPath);
-            await input.CopyToAsync(output);
+        private static bool IsSimpleFileName(string path)
+        {
+            return !Path.IsPathRooted(path) &&
+                   path.IndexOf(Path.DirectorySeparatorChar) < 0 &&
+                   path.IndexOf(Path.AltDirectorySeparatorChar) < 0;
+        }
 
-            return destPath;
+        private static async Task DownloadAndConvertAudioAsync(
+            YoutubeClient youtube,
+            IStreamInfo audioStream,
+            string outputPath,
+            (int SampleRate, int Channels, int Bitrate) audioSettings)
+        {
+            // Ensure output directory exists
+            var outputDir = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+
+            var tempFile = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+            try
+            {
+                // Download to temporary file
+                await youtube.Videos.Streams.DownloadAsync(audioStream, tempFile).ConfigureAwait(false);
+
+                // Convert with FFmpeg
+                await FFMpegArguments
+                    .FromFileInput(tempFile)
+                    .OutputToFile(outputPath, true, options => options
+                        .WithAudioCodec(Config.AudioCodec)
+                        .WithAudioSamplingRate(audioSettings.SampleRate)
+                        .WithCustomArgument($"-ac {audioSettings.Channels}")
+                        .WithAudioBitrate(audioSettings.Bitrate))
+                    .ProcessAsynchronously()
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                // Clean up temporary file
+                if (File.Exists(tempFile))
+                {
+                    try { File.Delete(tempFile); } catch { /* ignore cleanup errors */ }
+                }
+            }
+        }
+
+        private static string BuildDownloadFileName(string? fileNameHint)
+        {
+            var name = !string.IsNullOrWhiteSpace(fileNameHint) 
+                ? SanitizeFileName(fileNameHint) 
+                : Path.GetRandomFileName();
+
+            return name.EndsWith(Config.DefaultFileExtension, StringComparison.OrdinalIgnoreCase)
+                ? name
+                : name + Config.DefaultFileExtension;
         }
 
         private static string SanitizeFileName(string name)
         {
-            var invalid = new string(Path.GetInvalidFileNameChars());
-            var invalidRe = new Regex($"[{Regex.Escape(invalid)}]+");
-            var cleaned = invalidRe.Replace(name, "_").Trim();
+            var cleaned = FileNameCleanupRegex.Replace(name, "_").Trim();
             return string.IsNullOrWhiteSpace(cleaned) ? "file" : cleaned;
         }
     }

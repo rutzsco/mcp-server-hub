@@ -1,5 +1,5 @@
-#@baseServer = https://localhost:7077/
-@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
+@baseServer = https://localhost:7077
+#@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
 @apiKey = dev-api-key-12345
 
 ### Health check (no API key required)
@@ -13,50 +13,6 @@ POST {{baseServer}}
 Content-Type: application/json
 Accept: application/json, text/event-stream
 X-API-Key: {{apiKey}}
-
-{
-   "jsonrpc": "2.0",
-   "id": 1,
-   "method": "tools/list",
-   "params": {}
-}
-
-### T1 - List tools (local development with API key)
-POST https://localhost:5000
-Content-Type: application/json
-Accept: application/json, text/event-stream
-X-API-Key: {{apiKey}}
-
-{
-   "jsonrpc": "2.0",
-   "id": 1,
-   "method": "tools/list",
-   "params": {}
-}
-
-### T2 - Download YouTube audio and convert to MP3 (local)
-POST https://localhost:5000
-Content-Type: application/json
-Accept: application/json, text/event-stream
-X-API-Key: {{apiKey}}
-
-{
-   "jsonrpc": "2.0",
-   "id": 2,
-   "method": "tools/call",
-   "params": {
-      "name": "mcp_server_hub.Tools.YouTubeTools.DownloadToMp3",
-      "arguments": {
-         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-         "outputPath": "output_audio_16khz_mono.mp3"
-      }
-   }
-}
-
-### Test without API key (should return 401 if API key is configured)
-POST {{baseServer}}
-Content-Type: application/json
-Accept: application/json, text/event-stream
 
 {
    "jsonrpc": "2.0",

@@ -1,0 +1,48 @@
+# Variables
+#@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
+@baseServer = https://localhost:7077
+@apiKey = dev-api-key-12345
+
+
+### Health check (no API key required)
+GET {{baseServer}}/api/healthz
+
+### Time - Get current time (remote)
+GET {{baseServer}}/api/time
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+
+### Weather - Forecast by coordinates (remote)
+GET {{baseServer}}/api/weather/forecast?lat=38.8894&lon=-77.0352
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+
+### YouTube - Download to MP3 (remote) - defaults (16kHz mono, 64kbps)
+POST {{baseServer}}/api/youtube/mp3
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+}
+
+### YouTube - Download to MP3 (local) - custom options
+POST https://localhost:5000/api/youtube/mp3
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "outputPath": "output_audio_16khz_mono.mp3",
+  "sampleRateHz": 16000,
+  "channels": 1,
+  "bitrateKbps": 64
+}
+
+### Negative test - Missing API key should return 401
+GET {{baseServer}}/api/time
+Accept: application/json

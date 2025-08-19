@@ -7,6 +7,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using System.Net.Http.Headers;
+using mcp_server_hub.Routes;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,6 +48,9 @@ var app = builder.Build();
 app.UseMiddleware<mcp_server_hub.ApiKeyMiddleware>();
 
 app.MapGet("/api/healthz", () => Results.Ok("Healthy"));
+
+// Minimal API routes for tools
+app.MapToolRoutes();
 
 app.MapMcp();
 

@@ -1,14 +1,14 @@
 using System;
 using System.ComponentModel;
 using System.IO;
+using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using FFMpegCore;
-using ModelContextProtocol.Server;
 using YoutubeExplode;
 using YoutubeExplode.Videos.Streams;
 
-namespace mcp_server_hub.Tools
+namespace mcp_server_hub.Utilities
 {
     public record YouTubeToMp3Request(
         [property: Description("Full YouTube video URL")] string Url,
@@ -24,20 +24,25 @@ namespace mcp_server_hub.Tools
         [property: Description("Approximate video duration, if available")] TimeSpan? Duration
     );
 
-    [McpServerToolType]
-    public class YouTubeTools
+    public static class MediaUtils
     {
-        [McpServerTool, Description("Download a YouTube video's audio and convert it to an MP3 optimized for transcription (16kHz mono, 64 kbps by default). Returns the saved file path.")]
-        public async Task<YouTubeToMp3Result> DownloadToMp3(YouTubeToMp3Request request)
+        private static readonly Regex YouTubeRegex = new(
+            @"^(https?://)?(www\.)?(youtube\.com|youtu\.be)/",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        public static bool IsYouTubeUrl(string url)
+            => !string.IsNullOrWhiteSpace(url) && YouTubeRegex.IsMatch(url);
+
+        public static async Task<YouTubeToMp3Result> DownloadYouTubeToMp3Async(YouTubeToMp3Request request)
         {
             if (request is null) throw new ArgumentNullException(nameof(request));
             if (string.IsNullOrWhiteSpace(request.Url)) throw new ArgumentException("Url is required", nameof(request.Url));
 
             var sampleRate = request.SampleRateHz ?? 16000;
             var channels = request.Channels ?? 1;
-            var bitrate = request.BitrateKbps ?? 64;
+            var bitrate = request.BitrateKbps ?? 32;
 
-            // Ensure ffmpeg binaries are discoverable. Expect ffmpeg(.exe) to be placed in the app's base directory as per README.
+            // Ensure ffmpeg binaries are discoverable. Expect ffmpeg(.exe) to be placed in the app's base directory.
             GlobalFFOptions.Configure(new FFOptions
             {
                 BinaryFolder = AppContext.BaseDirectory
@@ -66,15 +71,14 @@ namespace mcp_server_hub.Tools
             }
             else
             {
-                // If only a file name is provided, place it under baseDir; otherwise, respect the full/relative path.
                 var provided = request.OutputPath;
-                if (!Path.IsPathRooted(provided) && provided.IndexOf(Path.DirectorySeparatorChar) < 0 && provided.IndexOf(Path.AltDirectorySeparatorChar) < 0)
+                if (!Path.IsPathRooted(provided!) && provided!.IndexOf(Path.DirectorySeparatorChar) < 0 && provided!.IndexOf(Path.AltDirectorySeparatorChar) < 0)
                 {
-                    outputPath = Path.Combine(baseDir, provided);
+                    outputPath = Path.Combine(baseDir, provided!);
                 }
                 else
                 {
-                    outputPath = Path.GetFullPath(provided);
+                    outputPath = Path.GetFullPath(provided!);
                 }
             }
 
@@ -88,13 +92,13 @@ namespace mcp_server_hub.Tools
                 await youtube.Videos.Streams.DownloadAsync(audio, tempFile);
 
                 // Convert and downsample
-        await FFMpegArguments
+                await FFMpegArguments
                     .FromFileInput(tempFile)
                     .OutputToFile(outputPath, true, options => options
                         .WithAudioCodec("libmp3lame")
                         .WithAudioSamplingRate(sampleRate)
-            .WithCustomArgument($"-ac {channels}")
-            .WithAudioBitrate(bitrate))
+                        .WithCustomArgument($"-ac {channels}")
+                        .WithAudioBitrate(bitrate))
                     .ProcessAsynchronously();
 
                 return new YouTubeToMp3Result(
@@ -110,6 +114,29 @@ namespace mcp_server_hub.Tools
                     try { File.Delete(tempFile); } catch { /* ignore */ }
                 }
             }
+        }
+
+        public static async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
+        {
+            if (string.IsNullOrWhiteSpace(url)) throw new ArgumentException("URL is required", nameof(url));
+
+            var tempDir = Path.GetTempPath();
+            var name = !string.IsNullOrWhiteSpace(fileNameHint) ? SanitizeFileName(fileNameHint!) : Path.GetRandomFileName();
+            if (!name.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase))
+            {
+                name += ".mp3";
+            }
+
+            var destPath = Path.Combine(tempDir, name);
+
+            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+
+            await using var input = await response.Content.ReadAsStreamAsync();
+            await using var output = File.Create(destPath);
+            await input.CopyToAsync(output);
+
+            return destPath;
         }
 
         private static string SanitizeFileName(string name)

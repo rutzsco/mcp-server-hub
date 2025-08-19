@@ -1,0 +1,261 @@
+# MCP (Model Context Protocol) JSON-RPC Tests
+# Tests for the MCP server endpoints using JSON-RPC 2.0 protocol
+
+# Variables
+@baseServer = https://localhost:7077
+#@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
+@apiKey = dev-api-key-12345
+
+### 1. List all available MCP tools
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 1,
+   "method": "tools/list",
+   "params": {}
+}
+
+### 2. Call Time Tool - Get current time (UTC and local)
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 2,
+   "method": "tools/call",
+   "params": {
+      "name": "get_current_time",
+      "arguments": {}
+   }
+}
+
+### 3. Call Weather Tool - Get forecast for Washington DC coordinates
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 3,
+   "method": "tools/call",
+   "params": {
+      "name": "get_forecast",
+      "arguments": {
+         "locationPoint": {
+            "latitude": 38.8894,
+            "longitude": -77.0352
+         }
+      }
+   }
+}
+
+### 4. Call Transcription Tool - YouTube to MP3 and transcribe (basic)
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 4,
+   "method": "tools/call",
+   "params": {
+      "name": "Transcribe",
+      "arguments": {
+         "url": "https://www.youtube.com/watch?v=xhAo_PmJaLY"
+      }
+   }
+}
+
+### 5. Call Transcription Tool - YouTube with custom parameters
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 5,
+   "method": "tools/call",
+   "params": {
+      "name": "Transcribe",
+      "arguments": {
+         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+         "deployment": "whisper",
+         "prompt": "This is a music video with lyrics",
+         "temperature": 0.1,
+         "responseFormat": "text",
+         "language": "en"
+      }
+   }
+}
+
+### 6. Call Transcription Tool - Direct MP3 URL
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 6,
+   "method": "tools/call",
+   "params": {
+      "name": "Transcribe",
+      "arguments": {
+         "url": "https://example.com/sample-audio.mp3"
+      }
+   }
+}
+
+### 7. Invalid method test - Should return error
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 7,
+   "method": "invalid/method",
+   "params": {}
+}
+
+### 8. Missing API key test - Should return 401
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json, text/event-stream
+
+{
+   "jsonrpc": "2.0",
+   "id": 8,
+   "method": "tools/list",
+   "params": {}
+}
+
+### 9. Invalid API key test - Should return 401
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: invalid-key
+
+{
+   "jsonrpc": "2.0",
+   "id": 9,
+   "method": "tools/list",
+   "params": {}
+}
+
+### 10. Call tool with invalid arguments - Should return error
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 10,
+   "method": "tools/call",
+   "params": {
+      "name": "GetForecast",
+      "arguments": {
+         "locationPoint": {
+            "latitude": "invalid",
+            "longitude": "invalid"
+         }
+      }
+   }
+}
+
+### 11. Call non-existent tool - Should return error
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 11,
+   "method": "tools/call",
+   "params": {
+      "name": "NonExistentTool",
+      "arguments": {}
+   }
+}
+
+### 12. Weather forecast for different location (San Francisco)
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 12,
+   "method": "tools/call",
+   "params": {
+      "name": "GetForecast",
+      "arguments": {
+         "locationPoint": {
+            "latitude": 37.7749,
+            "longitude": -122.4194
+         }
+      }
+   }
+}
+
+### 13. JSON-RPC request without ID (notification) - Should not return response
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "method": "tools/list",
+   "params": {}
+}
+
+### 14. Batch JSON-RPC request - Multiple tools in one request
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+[
+   {
+      "jsonrpc": "2.0",
+      "id": 14,
+      "method": "tools/list",
+      "params": {}
+   },
+   {
+      "jsonrpc": "2.0",
+      "id": 15,
+      "method": "tools/call",
+      "params": {
+         "name": "GetCurrentTime",
+         "arguments": {}
+      }
+   }
+]
+
+### 15. Test with malformed JSON - Should return parse error
+POST {{baseServer}}
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+   "jsonrpc": "2.0",
+   "id": 16,
+   "method": "tools/list",
+   "params": {
+}

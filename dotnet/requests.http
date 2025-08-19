@@ -5,9 +5,6 @@
 ### Health check (no API key required)
 GET {{baseServer}}/api/healthz
 
-### Health check (no API key required) - Local development
-GET https://localhost:5000/api/healthz
-
 ### T1 - List tools (with API key)
 POST {{baseServer}}
 Content-Type: application/json

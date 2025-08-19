@@ -20,28 +20,15 @@ X-API-Key: {{apiKey}}
 
 
 ### YouTube - Download to MP3 (remote) - defaults (16kHz mono, 64kbps)
-POST {{baseServer}}/api/youtube/mp3
+POST {{baseServer}}/api/transcribe
 Content-Type: application/json
 Accept: application/json
 X-API-Key: {{apiKey}}
 
 {
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  "url": "https://www.youtube.com/watch?v=eeOANluSqAE"
 }
 
-### YouTube - Download to MP3 (local) - custom options
-POST https://localhost:5000/api/youtube/mp3
-Content-Type: application/json
-Accept: application/json
-X-API-Key: {{apiKey}}
-
-{
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "outputPath": "output_audio_16khz_mono.mp3",
-  "sampleRateHz": 16000,
-  "channels": 1,
-  "bitrateKbps": 64
-}
 
 ### Negative test - Missing API key should return 401
 GET {{baseServer}}/api/time

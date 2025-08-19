@@ -38,9 +38,17 @@ builder.Services.AddHttpClient("WeatherAPI", client =>
     client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("mcp-weather-server", "1.0"));
 });
 
+// Add named HttpClient for Azure OpenAI with extended timeout
+builder.Services.AddHttpClient("AzureOpenAI", client =>
+{
+    client.Timeout = TimeSpan.FromMinutes(10); // 10 minutes for transcription operations
+    client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("mcp-transcription-server", "1.0"));
+});
+
 builder.Services.AddScoped<TimeTools>();
 builder.Services.AddScoped<WeatherTools>();
-builder.Services.AddScoped<YouTubeTools>();
+builder.Services.AddScoped<TranscriptionTools>();
+builder.Services.AddHttpClient();
 
 var app = builder.Build();
 

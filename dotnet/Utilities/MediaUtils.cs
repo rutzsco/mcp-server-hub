@@ -39,6 +39,8 @@ namespace mcp_server_hub.Utilities
             public const string DefaultFileExtension = ".mp3";
             public const string AudioCodec = "libmp3lame";
             public const string DefaultFileName = "youtube_audio";
+            // User-Agent string to mimic a real browser and avoid blocking
+            public const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
         }
 
         private static readonly Regex YouTubeRegex = new(
@@ -65,6 +67,15 @@ namespace mcp_server_hub.Utilities
 
         public static bool IsYouTubeUrl(string url) => !string.IsNullOrWhiteSpace(url) && YouTubeRegex.IsMatch(url);
 
+        private static YoutubeClient CreateYoutubeClient()
+        {
+            // Create HttpClient with proper User-Agent to avoid blocking issues
+            var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", Config.UserAgent);
+            
+            return new YoutubeClient(httpClient);
+        }
+
         public async Task<YouTubeToMp3Result> DownloadYouTubeToMp3WithAzureCacheAsync(YouTubeToMp3Request request, IConfiguration config)
         {
             _logger.LogInformation("Starting YouTube to MP3 download for URL: {Url}", request.Url);
@@ -75,7 +86,9 @@ namespace mcp_server_hub.Utilities
             _logger.LogInformation("Audio settings - SampleRate: {SampleRate}Hz, Channels: {Channels}, Bitrate: {Bitrate}kbps", 
                 audioSettings.SampleRate, audioSettings.Channels, audioSettings.Bitrate);
             
-            var youtube = new YoutubeClient();
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", Config.UserAgent);
+            var youtube = new YoutubeClient(httpClient);
 
             var container = config["AzureStorage:Container"] ?? "media-cache";
             _logger.LogInformation("Using Azure Storage container: {Container}", container);
@@ -96,10 +109,8 @@ namespace mcp_server_hub.Utilities
                 _logger.LogInformation("Fetching video metadata and audio streams...");
                 var (video, audioStream) = await GetVideoAndAudioStreamAsync(youtube, request.Url).ConfigureAwait(false);
                 
-                _logger.LogInformation("Video found - Title: '{Title}', Duration: {Duration}", 
-                    video?.Title, video?.Duration);
-                _logger.LogInformation("Audio stream - Bitrate: {Bitrate}, Container: {Container}", 
-                    audioStream.Bitrate, audioStream.Container);
+                _logger.LogInformation("Video found - Title: '{Title}', Duration: {Duration}", video?.Title, video?.Duration);
+                _logger.LogInformation("Audio stream - Bitrate: {Bitrate}, Container: {Container}", audioStream.Bitrate, audioStream.Container);
                 
                 var fileName = SanitizeFileName((video?.Title ?? Config.DefaultFileName) + "_16khz_mono") + Config.DefaultFileExtension;
                 var blobName = BlobStorageUtils.GetStableBlobNameForUrlAndAudioSettings(
@@ -237,7 +248,7 @@ namespace mcp_server_hub.Utilities
         private async Task<(YoutubeExplode.Videos.Video? Video, IStreamInfo AudioStream)> GetVideoAndAudioStreamAsync(
             YoutubeClient youtube, string url)
         {
-            _logger.LogInformation("Fetching video metadata...");
+            _logger.LogInformation($"Fetching video metadata...URL: {url}");
             var video = await youtube.Videos.GetAsync(url).ConfigureAwait(false);
             
             _logger.LogInformation("Fetching stream manifest...");

@@ -9,11 +9,13 @@ using System.Threading.Tasks;
 using ModelContextProtocol.Server;
 using mcp_server_hub.Utilities;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace mcp_server_hub.Tools
 {
     public record TranscriptionRequest(
         [property: Description("URL to a YouTube video or a direct .mp3 file")] string Url,
+        [property: Description("Force use of Whisper transcription instead of YouTube Transcript API (default: false)")] bool UseWhisper = false,
         [property: Description("Azure OpenAI deployment name for Whisper (audio-transcriptions)")] string? Deployment = null,
         [property: Description("Optional prompt or system hint for Whisper")] string? Prompt = null,
         [property: Description("Temperature for sampling (default 0)")] float? Temperature = null,
@@ -21,27 +23,145 @@ namespace mcp_server_hub.Tools
         [property: Description("Language code, e.g., en")] string? Language = null
     );
 
-
     [McpServerToolType]
     public class TranscriptionTools
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _config;
         private readonly MediaUtils _mediaUtils;
+        private readonly ILogger<TranscriptionTools> _logger;
 
-        public TranscriptionTools(IHttpClientFactory httpClientFactory, IConfiguration config, MediaUtils mediaUtils)
+        public TranscriptionTools(IHttpClientFactory httpClientFactory, IConfiguration config, MediaUtils mediaUtils, ILogger<TranscriptionTools> logger)
         {
             _httpClientFactory = httpClientFactory;
             _config = config;
             _mediaUtils = mediaUtils;
+            _logger = logger;
         }
 
-        [McpServerTool, Description("Transcribe audio from a YouTube URL or an MP3 URL using Azure OpenAI Whisper. Returns transcript text.")]
+        [McpServerTool, Description("Transcribe audio from a YouTube URL or an MP3 URL. For YouTube videos, uses YouTube Transcript API by default (faster, no audio processing), falls back to Whisper if needed.")]
         public async Task<string> Transcribe(TranscriptionRequest request)
         {
             if (request is null) throw new ArgumentNullException(nameof(request));
             if (string.IsNullOrWhiteSpace(request.Url)) throw new ArgumentException("Url is required", nameof(request.Url));
 
+            // For YouTube URLs, try the YouTube Transcript API first (unless explicitly forced to use Whisper)
+            if (MediaUtils.IsYouTubeUrl(request.Url) && !request.UseWhisper)
+            {
+                try
+                {
+                    _logger.LogInformation("Attempting to get transcript using YouTube Transcript API for URL: {Url}", request.Url);
+                    return await GetYouTubeTranscriptWithCacheAsync(request.Url);
+                }
+                catch (Exception ex)
+                {
+                    // Log the YouTube Transcript API failure and fall back to Whisper
+                    // Note: This is a common scenario as not all videos have transcripts available
+                    var isConfigError = ex.Message.Contains("API token is not configured");
+                    var logLevel = isConfigError ? LogLevel.Warning : LogLevel.Information;
+                    
+                    _logger.Log(logLevel, ex, "YouTube Transcript API failed, falling back to Whisper transcription. Reason: {Reason}", ex.Message);
+                    
+                    // Continue to Whisper transcription below
+                }
+            }
+
+            // Use Whisper transcription (either forced or as fallback)
+            _logger.LogInformation("Using Whisper transcription for URL: {Url}", request.Url);
+            return await TranscribeWithWhisper(request);
+        }
+
+        private async Task<string> GetYouTubeTranscriptWithCacheAsync(string youtubeUrl)
+        {
+            var container = _config["AzureStorage:Container"] ?? "media-cache";
+            var blobName = GetTranscriptBlobName(youtubeUrl);
+            
+            _logger.LogInformation("Checking transcript cache for URL: {Url}, BlobName: {BlobName}", youtubeUrl, blobName);
+
+            BlobStorageUtils? blobUtil = null;
+            try
+            {
+                blobUtil = new BlobStorageUtils(_config);
+                _logger.LogDebug("Azure Blob Storage configured for transcript cache");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Azure Blob Storage not available for transcript cache, proceeding without cache");
+            }
+
+            // Try to get cached transcript first
+            if (blobUtil is not null)
+            {
+                try
+                {
+                    var cachedTranscriptPath = await blobUtil.TryDownloadToTempAsync(container, blobName);
+                    if (!string.IsNullOrEmpty(cachedTranscriptPath) && File.Exists(cachedTranscriptPath))
+                    {
+                        _logger.LogInformation("Found cached transcript for URL: {Url}", youtubeUrl);
+                        var cachedTranscript = await File.ReadAllTextAsync(cachedTranscriptPath, Encoding.UTF8);
+                        
+                        // Clean up temp file
+                        try { File.Delete(cachedTranscriptPath); } catch { }
+                        
+                        if (!string.IsNullOrWhiteSpace(cachedTranscript))
+                        {
+                            _logger.LogInformation("Successfully retrieved transcript from cache, length: {Length} characters", cachedTranscript.Length);
+                            return cachedTranscript;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to retrieve transcript from cache (non-fatal), will fetch fresh transcript");
+                }
+            }
+
+            // Cache miss or no cache available, get fresh transcript
+            _logger.LogInformation("Transcript not found in cache, fetching from YouTube Transcript API");
+            var transcript = await _mediaUtils.GetYouTubeTranscriptAsync(youtubeUrl, _config);
+
+            // Cache the transcript for future use
+            if (blobUtil is not null && !string.IsNullOrWhiteSpace(transcript))
+            {
+                try
+                {
+                    var tempFile = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".txt");
+                    await File.WriteAllTextAsync(tempFile, transcript, Encoding.UTF8);
+                    
+                    _logger.LogInformation("Caching transcript to blob storage: {BlobName}", blobName);
+                    await blobUtil.UploadFileAsync(container, blobName, tempFile, contentType: "text/plain; charset=utf-8");
+                    
+                    // Clean up temp file
+                    try { File.Delete(tempFile); } catch { }
+                    
+                    _logger.LogInformation("Successfully cached transcript for future use");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cache transcript (non-fatal)");
+                }
+            }
+
+            return transcript;
+        }
+
+        private static string GetTranscriptBlobName(string youtubeUrl)
+        {
+            // Create a stable blob name based on base64 encoded URL
+            var urlBytes = Encoding.UTF8.GetBytes(youtubeUrl);
+            var base64Url = Convert.ToBase64String(urlBytes);
+            
+            // Make the base64 string blob-safe by replacing problematic characters
+            var safeBlobName = base64Url
+                .Replace("/", "_")
+                .Replace("+", "-")
+                .Replace("=", "");
+            
+            return $"transcripts/{safeBlobName}.txt";
+        }
+
+        private async Task<string> TranscribeWithWhisper(TranscriptionRequest request)
+        {
             // 1) Resolve to an MP3 file on disk
             string mp3Path;
             if (MediaUtils.IsYouTubeUrl(request.Url))

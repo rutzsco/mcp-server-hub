@@ -29,6 +29,7 @@ namespace mcp_server_hub.Utilities
     public class MediaUtils
     {
         private readonly ILogger<MediaUtils> _logger;
+        private readonly IHttpClientFactory _httpClientFactory;
 
         // Configuration constants
         private static class Config
@@ -60,12 +61,165 @@ namespace mcp_server_hub.Utilities
             });
         }
 
-        public MediaUtils(ILogger<MediaUtils> logger)
+        public MediaUtils(ILogger<MediaUtils> logger, IHttpClientFactory httpClientFactory)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
         }
 
         public static bool IsYouTubeUrl(string url) => !string.IsNullOrWhiteSpace(url) && YouTubeRegex.IsMatch(url);
+
+        /// <summary>
+        /// Extracts YouTube video ID from various YouTube URL formats
+        /// </summary>
+        public static string? ExtractYouTubeVideoId(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+
+            // Match different YouTube URL patterns
+            var patterns = new[]
+            {
+                @"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})",
+                @"youtube\.com/watch\?.*v=([a-zA-Z0-9_-]{11})"
+            };
+
+            foreach (var pattern in patterns)
+            {
+                var match = Regex.Match(url, pattern, RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    return match.Groups[1].Value;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Get transcript from YouTube Transcript API (youtube-transcript.io)
+        /// </summary>
+        public async Task<string> GetYouTubeTranscriptAsync(string youtubeUrl, IConfiguration config)
+        {
+            _logger.LogInformation("Getting YouTube transcript for URL: {Url}", youtubeUrl);
+
+            var videoId = ExtractYouTubeVideoId(youtubeUrl);
+            if (string.IsNullOrEmpty(videoId))
+            {
+                throw new ArgumentException("Invalid YouTube URL or could not extract video ID", nameof(youtubeUrl));
+            }
+
+            var apiToken = config["YouTubeTranscript:ApiToken"] ?? config["YOUTUBE_TRANSCRIPT_API_TOKEN"];
+            if (string.IsNullOrWhiteSpace(apiToken))
+            {
+                throw new InvalidOperationException("YouTube Transcript API token is not configured. Set YouTubeTranscript:ApiToken in appsettings or YOUTUBE_TRANSCRIPT_API_TOKEN environment variable.");
+            }
+
+            using var client = _httpClientFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", apiToken);
+
+            var requestBody = new { ids = new[] { videoId } };
+            var json = System.Text.Json.JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            _logger.LogInformation("Calling YouTube Transcript API for video ID: {VideoId}", videoId);
+
+            try
+            {
+                var response = await client.PostAsync("https://www.youtube-transcript.io/api/transcripts", content);
+                var responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogError("YouTube Transcript API failed: {StatusCode} {ReasonPhrase}. Body: {Body}", 
+                        response.StatusCode, response.ReasonPhrase, responseBody);
+                    throw new InvalidOperationException($"YouTube Transcript API failed: {response.StatusCode} {response.ReasonPhrase}. Body: {responseBody}");
+                }
+
+                // Parse the response to extract transcript text
+                using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+                
+                // Handle array response format (new format)
+                if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var videoItem in doc.RootElement.EnumerateArray())
+                    {
+                        if (videoItem.TryGetProperty("id", out var idElement) && idElement.GetString() == videoId)
+                        {
+                            if (videoItem.TryGetProperty("tracks", out var tracksElement) && tracksElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                // Look for the first available transcript track
+                                foreach (var track in tracksElement.EnumerateArray())
+                                {
+                                    if (track.TryGetProperty("transcript", out var transcriptElement) && transcriptElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                                    {
+                                        var transcriptText = new System.Text.StringBuilder();
+                                        foreach (var segment in transcriptElement.EnumerateArray())
+                                        {
+                                            if (segment.TryGetProperty("text", out var textElement))
+                                            {
+                                                var text = textElement.GetString();
+                                                if (!string.IsNullOrWhiteSpace(text))
+                                                {
+                                                    transcriptText.Append(text);
+                                                    transcriptText.Append(" ");
+                                                }
+                                            }
+                                        }
+                                        
+                                        var result = transcriptText.ToString().Trim();
+                                        if (!string.IsNullOrEmpty(result))
+                                        {
+                                            _logger.LogInformation("Successfully retrieved transcript, length: {Length} characters", result.Length);
+                                            return result;
+                                        }
+                                    }
+                                    break; // Only take the first track with transcript
+                                }
+                            }
+                        }
+                    }
+                }
+                // Handle object response format with data property (old format)
+                else if (doc.RootElement.TryGetProperty("data", out var dataElement) && dataElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var item in dataElement.EnumerateArray())
+                    {
+                        if (item.TryGetProperty("id", out var idElement) && idElement.GetString() == videoId)
+                        {
+                            if (item.TryGetProperty("transcript", out var transcriptElement) && transcriptElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            {
+                                var transcriptText = new System.Text.StringBuilder();
+                                foreach (var segment in transcriptElement.EnumerateArray())
+                                {
+                                    if (segment.TryGetProperty("text", out var textElement))
+                                    {
+                                        var text = textElement.GetString();
+                                        if (!string.IsNullOrWhiteSpace(text))
+                                        {
+                                            transcriptText.AppendLine(text);
+                                        }
+                                    }
+                                }
+                                
+                                var result = transcriptText.ToString().Trim();
+                                if (!string.IsNullOrEmpty(result))
+                                {
+                                    _logger.LogInformation("Successfully retrieved transcript, length: {Length} characters", result.Length);
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                throw new InvalidOperationException("Transcript not found in API response or unexpected response format");
+            }
+            catch (Exception ex) when (!(ex is InvalidOperationException))
+            {
+                _logger.LogError(ex, "Error calling YouTube Transcript API");
+                throw new InvalidOperationException($"Error calling YouTube Transcript API: {ex.Message}", ex);
+            }
+        }
 
         public async Task<YouTubeToMp3Result> DownloadYouTubeToMp3WithAzureCacheAsync(YouTubeToMp3Request request, IConfiguration config)
         {
@@ -164,6 +318,55 @@ namespace mcp_server_hub.Utilities
             {
                 _logger.LogError(ex, "Failed to download and convert YouTube video: {Url}", request.Url);
                 throw new InvalidOperationException($"Failed to download and convert YouTube video: {ex.Message}", ex);
+            }
+        }
+
+        public async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
+        {
+            _logger.LogInformation("Starting file download from URL: {Url}", url);
+            
+            if (string.IsNullOrWhiteSpace(url))
+                throw new ArgumentException("URL is required", nameof(url));
+
+            var fileName = !string.IsNullOrWhiteSpace(fileNameHint) 
+                ? SanitizeFileName(fileNameHint) 
+                : Path.GetRandomFileName();
+
+            if (!fileName.EndsWith(Config.DefaultFileExtension, StringComparison.OrdinalIgnoreCase))
+                fileName += Config.DefaultFileExtension;
+
+            var destPath = Path.Combine(Path.GetTempPath(), fileName);
+            
+            _logger.LogInformation("Download destination: {DestPath}", destPath);
+
+            try
+            {
+                _logger.LogInformation("Sending HTTP request...");
+                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                
+                _logger.LogInformation("HTTP response received - Status: {StatusCode}, Content-Length: {ContentLength}", 
+                    response.StatusCode, response.Content.Headers.ContentLength);
+
+                await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                await using var output = File.Create(destPath);
+                
+                _logger.LogInformation("Starting file copy...");
+                await input.CopyToAsync(output).ConfigureAwait(false);
+                
+                _logger.LogInformation("File download completed successfully: {DestPath}", destPath);
+                return destPath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download file from {Url}", url);
+                
+                // Clean up partial file on failure
+                if (File.Exists(destPath))
+                {
+                    try { File.Delete(destPath); } catch { /* ignore cleanup errors */ }
+                }
+                throw new InvalidOperationException($"Failed to download file from {url}: {ex.Message}", ex);
             }
         }
 
@@ -313,55 +516,6 @@ namespace mcp_server_hub.Utilities
             // Then replace invalid file name characters with underscores
             var cleaned = FileNameCleanupRegex.Replace(withoutSpaces, "_").Trim('_');
             return string.IsNullOrWhiteSpace(cleaned) ? "file" : cleaned;
-        }
-
-        public async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
-        {
-            _logger.LogInformation("Starting file download from URL: {Url}", url);
-            
-            if (string.IsNullOrWhiteSpace(url))
-                throw new ArgumentException("URL is required", nameof(url));
-
-            var fileName = !string.IsNullOrWhiteSpace(fileNameHint) 
-                ? SanitizeFileName(fileNameHint) 
-                : Path.GetRandomFileName();
-
-            if (!fileName.EndsWith(Config.DefaultFileExtension, StringComparison.OrdinalIgnoreCase))
-                fileName += Config.DefaultFileExtension;
-
-            var destPath = Path.Combine(Path.GetTempPath(), fileName);
-            
-            _logger.LogInformation("Download destination: {DestPath}", destPath);
-
-            try
-            {
-                _logger.LogInformation("Sending HTTP request...");
-                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
-                
-                _logger.LogInformation("HTTP response received - Status: {StatusCode}, Content-Length: {ContentLength}", 
-                    response.StatusCode, response.Content.Headers.ContentLength);
-
-                await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                await using var output = File.Create(destPath);
-                
-                _logger.LogInformation("Starting file copy...");
-                await input.CopyToAsync(output).ConfigureAwait(false);
-                
-                _logger.LogInformation("File download completed successfully: {DestPath}", destPath);
-                return destPath;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to download file from {Url}", url);
-                
-                // Clean up partial file on failure
-                if (File.Exists(destPath))
-                {
-                    try { File.Delete(destPath); } catch { /* ignore cleanup errors */ }
-                }
-                throw new InvalidOperationException($"Failed to download file from {url}: {ex.Message}", ex);
-            }
         }
     }
 }

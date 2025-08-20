@@ -27,11 +27,13 @@ namespace mcp_server_hub.Tools
     {
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly IConfiguration _config;
+        private readonly MediaUtils _mediaUtils;
 
-        public TranscriptionTools(IHttpClientFactory httpClientFactory, IConfiguration config)
+        public TranscriptionTools(IHttpClientFactory httpClientFactory, IConfiguration config, MediaUtils mediaUtils)
         {
             _httpClientFactory = httpClientFactory;
             _config = config;
+            _mediaUtils = mediaUtils;
         }
 
         [McpServerTool, Description("Transcribe audio from a YouTube URL or an MP3 URL using Azure OpenAI Whisper. Returns transcript text.")]
@@ -44,13 +46,13 @@ namespace mcp_server_hub.Tools
             string mp3Path;
             if (MediaUtils.IsYouTubeUrl(request.Url))
             {
-                var yt = await MediaUtils.DownloadYouTubeToMp3WithAzureCacheAsync(new YouTubeToMp3Request(request.Url), _config);
+                var yt = await _mediaUtils.DownloadYouTubeToMp3WithAzureCacheAsync(new YouTubeToMp3Request(request.Url), _config);
                 mp3Path = yt.OutputPath;
             }
             else
             {
                 using var http = _httpClientFactory.CreateClient();
-                mp3Path = await MediaUtils.DownloadFileAsync(http, request.Url);
+                mp3Path = await _mediaUtils.DownloadFileAsync(http, request.Url);
             }
 
             try

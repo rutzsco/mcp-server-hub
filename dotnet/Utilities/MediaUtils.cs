@@ -67,15 +67,6 @@ namespace mcp_server_hub.Utilities
 
         public static bool IsYouTubeUrl(string url) => !string.IsNullOrWhiteSpace(url) && YouTubeRegex.IsMatch(url);
 
-        private static YoutubeClient CreateYoutubeClient()
-        {
-            // Create HttpClient with proper User-Agent to avoid blocking issues
-            var httpClient = new HttpClient();
-            httpClient.DefaultRequestHeaders.Add("User-Agent", Config.UserAgent);
-            
-            return new YoutubeClient(httpClient);
-        }
-
         public async Task<YouTubeToMp3Result> DownloadYouTubeToMp3WithAzureCacheAsync(YouTubeToMp3Request request, IConfiguration config)
         {
             _logger.LogInformation("Starting YouTube to MP3 download for URL: {Url}", request.Url);
@@ -173,49 +164,6 @@ namespace mcp_server_hub.Utilities
             {
                 _logger.LogError(ex, "Failed to download and convert YouTube video: {Url}", request.Url);
                 throw new InvalidOperationException($"Failed to download and convert YouTube video: {ex.Message}", ex);
-            }
-        }
-
-        public async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
-        {
-            _logger.LogInformation("Starting file download from URL: {Url}", url);
-            
-            if (string.IsNullOrWhiteSpace(url))
-                throw new ArgumentException("URL is required", nameof(url));
-
-            var fileName = BuildDownloadFileName(fileNameHint);
-            var destPath = Path.Combine(Path.GetTempPath(), fileName);
-            
-            _logger.LogInformation("Download destination: {DestPath}", destPath);
-
-            try
-            {
-                _logger.LogInformation("Sending HTTP request...");
-                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
-                
-                _logger.LogInformation("HTTP response received - Status: {StatusCode}, Content-Length: {ContentLength}", 
-                    response.StatusCode, response.Content.Headers.ContentLength);
-
-                await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                await using var output = File.Create(destPath);
-                
-                _logger.LogInformation("Starting file copy...");
-                await input.CopyToAsync(output).ConfigureAwait(false);
-                
-                _logger.LogInformation("File download completed successfully: {DestPath}", destPath);
-                return destPath;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to download file from {Url}", url);
-                
-                // Clean up partial file on failure
-                if (File.Exists(destPath))
-                {
-                    try { File.Delete(destPath); } catch { /* ignore cleanup errors */ }
-                }
-                throw new InvalidOperationException($"Failed to download file from {url}: {ex.Message}", ex);
             }
         }
 
@@ -358,17 +306,6 @@ namespace mcp_server_hub.Utilities
             }
         }
 
-        private static string BuildDownloadFileName(string? fileNameHint)
-        {
-            var name = !string.IsNullOrWhiteSpace(fileNameHint) 
-                ? SanitizeFileName(fileNameHint) 
-                : Path.GetRandomFileName();
-
-            return name.EndsWith(Config.DefaultFileExtension, StringComparison.OrdinalIgnoreCase)
-                ? name
-                : name + Config.DefaultFileExtension;
-        }
-
         private static string SanitizeFileName(string name)
         {
             // First replace all whitespace with underscores
@@ -376,6 +313,55 @@ namespace mcp_server_hub.Utilities
             // Then replace invalid file name characters with underscores
             var cleaned = FileNameCleanupRegex.Replace(withoutSpaces, "_").Trim('_');
             return string.IsNullOrWhiteSpace(cleaned) ? "file" : cleaned;
+        }
+
+        public async Task<string> DownloadFileAsync(HttpClient http, string url, string? fileNameHint = null)
+        {
+            _logger.LogInformation("Starting file download from URL: {Url}", url);
+            
+            if (string.IsNullOrWhiteSpace(url))
+                throw new ArgumentException("URL is required", nameof(url));
+
+            var fileName = !string.IsNullOrWhiteSpace(fileNameHint) 
+                ? SanitizeFileName(fileNameHint) 
+                : Path.GetRandomFileName();
+
+            if (!fileName.EndsWith(Config.DefaultFileExtension, StringComparison.OrdinalIgnoreCase))
+                fileName += Config.DefaultFileExtension;
+
+            var destPath = Path.Combine(Path.GetTempPath(), fileName);
+            
+            _logger.LogInformation("Download destination: {DestPath}", destPath);
+
+            try
+            {
+                _logger.LogInformation("Sending HTTP request...");
+                using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                
+                _logger.LogInformation("HTTP response received - Status: {StatusCode}, Content-Length: {ContentLength}", 
+                    response.StatusCode, response.Content.Headers.ContentLength);
+
+                await using var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                await using var output = File.Create(destPath);
+                
+                _logger.LogInformation("Starting file copy...");
+                await input.CopyToAsync(output).ConfigureAwait(false);
+                
+                _logger.LogInformation("File download completed successfully: {DestPath}", destPath);
+                return destPath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to download file from {Url}", url);
+                
+                // Clean up partial file on failure
+                if (File.Exists(destPath))
+                {
+                    try { File.Delete(destPath); } catch { /* ignore cleanup errors */ }
+                }
+                throw new InvalidOperationException($"Failed to download file from {url}: {ex.Message}", ex);
+            }
         }
     }
 }

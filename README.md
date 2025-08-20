@@ -8,6 +8,7 @@ Minimal .NET 8 remote MCP server using Streamable HTTP transport.
 - Optional API key authentication
 - OpenTelemetry wiring (traces + metrics + logs) – add an OTLP endpoint via env vars later
 - Dockerfile exposing port 8080 (container) / configurable via `ASPNETCORE_URLS`
+ - Swagger/OpenAPI 3 docs at `/swagger`
 
 ## Prerequisites
 - .NET 8 SDK
@@ -53,6 +54,10 @@ curl -H "X-API-Key: your-secret-api-key-here" http://localhost:5000/mcp/sse
 dotnet run --project ./mcp-server-hub/mcp-server-hub.csproj
 ```
 Browse: http://localhost:5000/api/healthz (or the port shown in console)
+
+### API docs (Swagger)
+When running locally, browse to `/swagger` for interactive API documentation.
+If an API key is configured, click the "Authorize" button and enter the header value for `X-API-Key` to try secured endpoints.
 
 ## Add to VS Code (SSE transport)
 When containerized or deployed, use the `/mcp/sse` endpoint produced by `MapMcp("/mcp")` for legacy SSE connections if stateful mode is enabled (default).

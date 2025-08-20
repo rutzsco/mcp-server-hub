@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using FFMpegCore;
 using YoutubeExplode;
 using YoutubeExplode.Videos.Streams;
+using Microsoft.Extensions.Configuration;
 
 namespace mcp_server_hub.Utilities
 {
@@ -76,6 +77,61 @@ namespace mcp_server_hub.Utilities
                     Title: video?.Title,
                     Duration: video?.Duration
                 );
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to download and convert YouTube video: {ex.Message}", ex);
+            }
+        }
+
+        // Azure Blob-cached variant: If the MP3 exists in blob storage, download it; otherwise create it and upload.
+        public static async Task<YouTubeToMp3Result> DownloadYouTubeToMp3WithAzureCacheAsync(YouTubeToMp3Request request, IConfiguration config)
+        {
+            ValidateRequest(request);
+
+            var audioSettings = ExtractAudioSettings(request);
+            var youtube = new YoutubeClient();
+
+            var container = config["AzureStorage:Container"] ?? "media-cache";
+            BlobStorageUtils? blobUtil = null;
+            try { blobUtil = new BlobStorageUtils(config); } catch { /* storage optional */ }
+
+            try
+            {
+                var (video, audioStream) = await GetVideoAndAudioStreamAsync(youtube, request.Url).ConfigureAwait(false);
+                var fileName = SanitizeFileName((video?.Title ?? Config.DefaultFileName) + "_16khz_mono") + Config.DefaultFileExtension;
+                var blobName = BlobStorageUtils.GetStableBlobNameForUrlAndAudioSettings(
+                    request.Url,
+                    audioSettings.SampleRate,
+                    audioSettings.Channels,
+                    audioSettings.Bitrate,
+                    Config.DefaultFileExtension);
+
+                // Try to fetch from blob if available
+                if (blobUtil is not null)
+                {
+                    var cachedPath = await blobUtil.TryDownloadToTempAsync(container, blobName);
+                    if (!string.IsNullOrEmpty(cachedPath) && File.Exists(cachedPath))
+                    {
+                        var finalPath = DetermineOutputPath(request.OutputPath, video?.Title);
+                        Directory.CreateDirectory(Path.GetDirectoryName(finalPath) ?? AppContext.BaseDirectory);
+                        File.Copy(cachedPath, finalPath, overwrite: true);
+                        try { File.Delete(cachedPath); } catch { }
+                        return new YouTubeToMp3Result(finalPath, video?.Title, video?.Duration);
+                    }
+                }
+
+                // Not in cache: download from YouTube, convert, then upload to blob
+                var outputPath = DetermineOutputPath(request.OutputPath, video?.Title);
+                await DownloadAndConvertAudioAsync(youtube, audioStream, outputPath, audioSettings).ConfigureAwait(false);
+
+                if (blobUtil is not null)
+                {
+                    try { await blobUtil.UploadFileAsync(container, blobName, outputPath, contentType: "audio/mpeg"); }
+                    catch { /* non-fatal */ }
+                }
+
+                return new YouTubeToMp3Result(outputPath, video?.Title, video?.Duration);
             }
             catch (Exception ex)
             {
@@ -227,7 +283,10 @@ namespace mcp_server_hub.Utilities
 
         private static string SanitizeFileName(string name)
         {
-            var cleaned = FileNameCleanupRegex.Replace(name, "_").Trim();
+            // First replace all whitespace with underscores
+            var withoutSpaces = Regex.Replace(name, @"\s+", "_");
+            // Then replace invalid file name characters with underscores
+            var cleaned = FileNameCleanupRegex.Replace(withoutSpaces, "_").Trim('_');
             return string.IsNullOrWhiteSpace(cleaned) ? "file" : cleaned;
         }
     }

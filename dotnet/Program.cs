@@ -48,6 +48,7 @@ builder.Services.AddHttpClient("AzureOpenAI", client =>
 builder.Services.AddScoped<TimeTools>();
 builder.Services.AddScoped<WeatherTools>();
 builder.Services.AddScoped<TranscriptionTools>();
+builder.Services.AddSingleton<mcp_server_hub.Utilities.BlobStorageUtils>();
 builder.Services.AddHttpClient();
 
 var app = builder.Build();

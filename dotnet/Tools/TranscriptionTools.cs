@@ -44,7 +44,7 @@ namespace mcp_server_hub.Tools
             string mp3Path;
             if (MediaUtils.IsYouTubeUrl(request.Url))
             {
-                var yt = await MediaUtils.DownloadYouTubeToMp3Async(new YouTubeToMp3Request(request.Url));
+                var yt = await MediaUtils.DownloadYouTubeToMp3WithAzureCacheAsync(new YouTubeToMp3Request(request.Url), _config);
                 mp3Path = yt.OutputPath;
             }
             else

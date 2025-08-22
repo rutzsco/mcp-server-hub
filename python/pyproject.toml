@@ -1,0 +1,17 @@
+[project]
+name = "hello-work-api"
+version = "0.1.0"
+description = "Minimal FastAPI service with a hello endpoint and status, managed by uv"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Your Name" }]
+license = { text = "MIT" }
+
+# Application dependencies
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+]
+
+[tool.uv]
+# Only using uv for package management

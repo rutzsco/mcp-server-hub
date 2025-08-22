@@ -1,6 +1,6 @@
 # Variables
-#@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
-@baseServer = https://localhost:7077
+@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
+#@baseServer = https://localhost:7077
 @apiKey = dev-api-key-12345
 
 
@@ -26,7 +26,7 @@ Accept: application/json
 X-API-Key: {{apiKey}}
 
 {
-  "url": "https://www.youtube.com/watch?v=eeOANluSqAE&t"
+  "url": "https://www.youtube.com/watch?v=xhAo_PmJaLY"
 }
 
 

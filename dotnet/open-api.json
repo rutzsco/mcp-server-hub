@@ -1,0 +1,92 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MCP Server Hub API",
+    "description": "REST endpoints for tools and health checks",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/",
+      "description": "Production Server"
+    }
+  ],
+  "paths": {
+    "/api/transcribe": {
+      "post": {
+        "tags": [
+          "Transcription"
+        ],
+        "summary": "Transcribe audio from YouTube or MP3 using Azure OpenAI Whisper",
+        "description": "Submit a transcription request with either a YouTube URL or an MP3 URL in the body.",
+        "operationId": "TranscribeAudio",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TranscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TranscriptionRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "useWhisper": {
+            "type": "boolean"
+          },
+          "deployment": {
+            "type": "string",
+            "nullable": true
+          },
+          "prompt": {
+            "type": "string",
+            "nullable": true
+          },
+          "temperature": {
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "responseFormat": {
+            "type": "string",
+            "nullable": true
+          },
+          "language": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "description": "API Key required for secured endpoints",
+        "name": "X-API-Key",
+        "in": "header"
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ]
+}

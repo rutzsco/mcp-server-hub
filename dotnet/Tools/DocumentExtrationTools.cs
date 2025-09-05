@@ -1,49 +1,27 @@
-using System;
 using System.ComponentModel;
-using System.Threading.Tasks;
 using Azure;
-using Azure.Identity;
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Specialized;
 using ModelContextProtocol.Server;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using System.IO;
 using System.Text;
 using System.Text.Json;
 using mcp_server_hub.Utilities;
+using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
+using SkiaSharp;
+using System.Reflection;
 
 namespace mcp_server_hub.Tools;
 
-public record BlobMetadataRequest(
-    [property: Description("HTTPS URI of the blob (can include SAS token)")] string FileUri
-);
-
-public record BlobMetadataResult(
-    [property: Description("Original blob URI provided")] string BlobUri,
-    [property: Description("Storage account name")] string? AccountName,
-    [property: Description("Container name")] string? Container,
-    [property: Description("Blob name (path within container)")] string? BlobName,
-    [property: Description("Content length in bytes")] long? ContentLength,
-    [property: Description("Content type (MIME)")] string? ContentType,
-    [property: Description("Entity tag") ] string? ETag,
-    [property: Description("Last modified timestamp (UTC)")] DateTimeOffset? LastModified,
-    [property: Description("Content MD5 hash (base64)")] string? ContentHashBase64,
-    [property: Description("User-defined metadata key/value pairs")] System.Collections.Generic.IDictionary<string,string>? Metadata
-);
-
-// MaxBytes, Deployment and Raw removed – now provided via configuration (tool config)
 public record BlobContentExtractionRequest(
-    [property: Description("HTTPS URI of the blob (can include SAS token)")] string FileUri,
-    [property: Description("System prompt describing information to extract (default: extract key facts, entities, dates, amounts)")] string? ExtractionPrompt = null
+    [property: Description("HTTPS URI of the PDF blob (can include SAS token)")] string FileUri,
+    [property: Description("User prompt describing specific information to extract or analysis to perform on the document")] string? ExtractionPrompt = null
 );
 
 public record BlobContentExtractionResult(
     [property: Description("Original blob URI")] string BlobUri,
-    [property: Description("Truncated content length processed")] int ContentLength,
-    [property: Description("Model response with extracted info (JSON unless RawResponse=true in config)")] string Extraction
+    [property: Description("Number of pages processed")] int PagesProcessed,
+    [property: Description("Model response with extracted info from PDF images")] string Extraction
 );
 
 [McpServerToolType]
@@ -60,58 +38,7 @@ public class DocumentExtrationTools
         _blobUtils = blobUtils;
     }
 
-    [McpServerTool, Description("Load Azure Blob Storage file metadata for a given blob URI (supports SAS or Managed Identity).")]
-    public async Task<BlobMetadataResult> GetBlobMetadata(BlobMetadataRequest request)
-    {
-        if (request is null) throw new ArgumentNullException(nameof(request));
-        if (string.IsNullOrWhiteSpace(request.FileUri)) throw new ArgumentException("FileUri is required", nameof(request.FileUri));
-
-        var uri = new Uri(request.FileUri);
-        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Only HTTPS URIs are supported", nameof(request.FileUri));
-
-        try
-        {
-            var (blobClient, props) = await _blobUtils.GetBlobPropertiesAsync(uri, _logger);
-
-            // Extract container + blob path
-            string? container = null;
-            string? blobName = null;
-            var segments = uri.AbsolutePath.Trim('/').Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (segments.Length > 0) container = segments[0];
-            if (segments.Length > 1) blobName = segments[1];
-
-            var contentHash = props.ContentHash is { Length: > 0 } ? Convert.ToBase64String(props.ContentHash) : null;
-
-            return new BlobMetadataResult(
-                BlobUri: request.FileUri,
-                AccountName: TryExtractAccountName(uri.Host),
-                Container: container,
-                BlobName: blobName,
-                ContentLength: props.ContentLength,
-                ContentType: props.ContentType,
-                ETag: props.ETag.ToString(),
-                LastModified: props.LastModified,
-                ContentHashBase64: contentHash,
-                Metadata: props.Metadata
-            );
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            throw new InvalidOperationException($"Blob not found: {request.FileUri}", ex);
-        }
-        catch (RequestFailedException ex) when (ex.Status == 403 || ex.Status == 401)
-        {
-            throw new InvalidOperationException($"Unauthorized to access blob: {ex.Message}", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to retrieve blob metadata for {BlobUri}", request.FileUri);
-            throw new InvalidOperationException($"Failed to retrieve blob metadata: {ex.Message}", ex);
-        }
-    }
-
-    [McpServerTool, Description("Download blob text content and extract key information using an LLM (Azure OpenAI chat completion via Semantic Kernel). Large blobs truncated.")]
+    [McpServerTool, Description("Download PDF blob, convert pages to PNG images, and extract key information using an LLM with vision capabilities (Azure OpenAI GPT-4V via Semantic Kernel).")]
     public async Task<BlobContentExtractionResult> ExtractBlobContent(BlobContentExtractionRequest request)
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
@@ -121,29 +48,79 @@ public class DocumentExtrationTools
         if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Only HTTPS URIs are supported", nameof(request.FileUri));
 
+        string? tempPdfPath = null;
         try
         {
-            var maxBytes = ResolveMaxBytes();
-            var (text, length) = await _blobUtils.DownloadTextAsync(uri, maxBytes, _logger);
-            if (length == 0) throw new InvalidOperationException("Blob is empty");
+            var (client, props) = await _blobUtils.GetBlobPropertiesAsync(uri, _logger);
+            if (props.ContentLength == 0) throw new InvalidOperationException("PDF blob is empty");
 
-            var systemPrompt = request.ExtractionPrompt ?? ResolveDefaultPrompt();
-            var extraction = await RunChatExtractionAsync(systemPrompt, text);
-            return new BlobContentExtractionResult(request.FileUri, length, extraction);
+            // Validate content type is PDF
+            if (!string.Equals(props.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Content type is {ContentType}, expected application/pdf", props.ContentType);
+            }
+
+            // Download PDF to temp file
+            tempPdfPath = Path.GetTempFileName();
+            await client.DownloadToAsync(tempPdfPath);
+            _logger.LogInformation("Downloaded PDF to {TempPath}, size: {Size} bytes", tempPdfPath, new FileInfo(tempPdfPath).Length);
+
+            // Convert PDF pages to PNG images
+            var pageImages = await ConvertPdfToPngImagesAsync(tempPdfPath);
+            _logger.LogInformation("Converted PDF to {PageCount} PNG images", pageImages.Count);
+
+            // Extract information using LLM vision
+            var systemPrompt = LoadSystemPrompt();
+            var userPrompt = request.ExtractionPrompt ?? ResolveDefaultUserPrompt();
+            var extraction = await RunVisionExtractionAsync(systemPrompt, userPrompt, pageImages);
+            
+            return new BlobContentExtractionResult(request.FileUri, pageImages.Count, extraction);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
-            throw new InvalidOperationException($"Blob not found: {request.FileUri}", ex);
+            throw new InvalidOperationException($"PDF blob not found: {request.FileUri}", ex);
+        }
+        finally
+        {
+            if (tempPdfPath != null && File.Exists(tempPdfPath))
+            {
+                try { File.Delete(tempPdfPath); } catch { }
+            }
         }
     }
 
-    private string ResolveDefaultPrompt() => _config["DocumentExtraction:Prompt"] ?? "You are a system that extracts structured key information from the provided document content. Return concise JSON with fields: entities (array of {type,name}), dates (ISO8601 strings), amounts (array of {currency?, amount, context}), summary (short), keyFacts (array of strings). If content appears binary or non-text, indicate that in a JSON error field.";
-
-    private int ResolveMaxBytes()
+    private string LoadSystemPrompt()
     {
-        var val = _config["DocumentExtraction:MaxBytes"];
+        var assembly = Assembly.GetExecutingAssembly();
+        var resourceName = "mcp_server_hub.Resources.DocumentAnalysisSystemPrompt.txt";
+        
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream == null)
+        {
+            _logger.LogWarning("Could not load embedded system prompt resource: {ResourceName}", resourceName);
+            return ResolveDefaultSystemPrompt();
+        }
+        
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private string ResolveDefaultSystemPrompt() => _config["DocumentExtraction:SystemPrompt"] ?? "You are a system that extracts structured key information from the provided PDF document images. Analyze each page image and return concise JSON with fields: entities (array of {type,name}), dates (ISO8601 strings), amounts (array of {currency?, amount, context}), summary (short), keyFacts (array of strings). Focus on text content visible in the images.";
+
+    private string ResolveDefaultUserPrompt() => _config["DocumentExtraction:UserPrompt"] ?? "Please analyze this PDF document and extract all key information in the standard JSON format.";
+
+    private int ResolveMaxPages()
+    {
+        var val = _config["DocumentExtraction:MaxPages"];
         if (int.TryParse(val, out var parsed) && parsed > 0) return parsed;
-        return 200_000;
+        return 5; // Default to first 5 pages
+    }
+
+    private int ResolveDpi()
+    {
+        var val = _config["DocumentExtraction:RenderDpi"];
+        if (int.TryParse(val, out var parsed) && parsed > 0) return parsed;
+        return 150; // Default DPI for rendering
     }
 
     private bool UseRawResponse()
@@ -152,16 +129,85 @@ public class DocumentExtrationTools
         return bool.TryParse(flag, out var b) && b;
     }
 
-    private async Task<string> RunChatExtractionAsync(string systemPrompt, string content)
+    private async Task<List<string>> ConvertPdfToPngImagesAsync(string pdfPath)
+    {
+        var base64Images = new List<string>();
+        var maxPages = ResolveMaxPages();
+
+        using var document = PdfDocument.Open(pdfPath);
+        var pagesToProcess = Math.Min(document.NumberOfPages, maxPages);
+        
+        _logger.LogInformation("Processing {PagesToProcess} pages out of {TotalPages}", pagesToProcess, document.NumberOfPages);
+
+        for (int pageNum = 1; pageNum <= pagesToProcess; pageNum++)
+        {
+            try
+            {
+                var page = document.GetPage(pageNum);
+                var base64Image = await ConvertPageToPngBase64Async(page);
+                base64Images.Add(base64Image);
+                _logger.LogDebug("Converted page {PageNum} to PNG", pageNum);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to convert page {PageNum} to PNG", pageNum);
+            }
+        }
+
+        return base64Images;
+    }
+
+    private async Task<string> ConvertPageToPngBase64Async(Page page)
+    {
+        return await Task.Run(() =>
+        {
+            var pageWidth = (int)page.Width;
+            var pageHeight = (int)page.Height;
+            var dpi = ResolveDpi();
+            var scale = dpi / 72f; // PDF is 72 DPI by default
+            
+            var scaledWidth = (int)(pageWidth * scale);
+            var scaledHeight = (int)(pageHeight * scale);
+
+            using var surface = SKSurface.Create(new SKImageInfo(scaledWidth, scaledHeight));
+            var canvas = surface.Canvas;
+            canvas.Clear(SKColors.White);
+
+            // Simple text extraction and rendering (basic implementation)
+            // Note: This is a simplified approach. For production, consider using a more robust PDF-to-image library
+            var paint = new SKPaint
+            {
+                Color = SKColors.Black,
+                TextSize = 12 * scale,
+                IsAntialias = true
+            };
+
+            var yPos = 20 * scale;
+            foreach (var word in page.GetWords())
+            {
+                var text = word.Text;
+                var bbox = word.BoundingBox;
+                var x = (float)(bbox.Left * scale);
+                var y = (float)(bbox.Bottom * scale);
+                
+                canvas.DrawText(text, x, y, paint);
+            }
+
+            using var image = surface.Snapshot();
+            using var data = image.Encode(SKEncodedImageFormat.Png, 90);
+            return Convert.ToBase64String(data.ToArray());
+        });
+    }
+
+    private async Task<string> RunVisionExtractionAsync(string systemPrompt, string userPrompt, List<string> pageImages)
     {
         var endpoint = _config["AzureOpenAI:Endpoint"] ?? _config["AZURE_OPENAI_ENDPOINT"];
         var apiKey = _config["AzureOpenAI:ApiKey"] ?? _config["AZURE_OPENAI_API_KEY"];
-        var deployment = _config["DocumentExtraction:ChatDeployment"] ?? _config["AzureOpenAI:ChatDeployment"] ?? _config["AzureOpenAI:CompletionsDeployment"] ?? "gpt-4o";
+        var deployment = _config["DocumentExtraction:VisionDeployment"] ?? _config["AzureOpenAI:VisionDeployment"] ?? "gpt-4o";
         var apiVersion = _config["AzureOpenAI:ApiVersion"] ?? "2024-10-01-preview";
         if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(apiKey))
             throw new InvalidOperationException("Azure OpenAI endpoint/api key not configured");
 
-        // Build kernel with Azure OpenAI chat completion service
         var builder = Kernel.CreateBuilder();
         builder.AddAzureOpenAIChatCompletion(
             deploymentName: deployment,
@@ -173,7 +219,27 @@ public class DocumentExtrationTools
 
         var history = new ChatHistory();
         history.AddSystemMessage(systemPrompt);
-        history.AddUserMessage($"Document content (may be truncated):\n```\n{TruncateForPrompt(content, 12000)}\n```\nProvide the extracted information now.");
+
+        // Create user message with images
+        var fullUserMessage = new StringBuilder();
+        fullUserMessage.AppendLine(userPrompt);
+        fullUserMessage.AppendLine();
+        fullUserMessage.AppendLine($"PDF Document Analysis - {pageImages.Count} pages:");
+        
+        for (int i = 0; i < pageImages.Count; i++)
+        {
+            fullUserMessage.AppendLine($"Page {i + 1}:");
+        }
+
+        var chatMessage = new ChatMessageContent(AuthorRole.User, fullUserMessage.ToString());
+        
+        // Add images as content items
+        for (int i = 0; i < pageImages.Count; i++)
+        {
+            chatMessage.Items.Add(new ImageContent($"data:image/png;base64,{pageImages[i]}"));
+        }
+        
+        history.Add(chatMessage);
 
         var response = await chat.GetChatMessageContentAsync(history);
         var message = response.Content?.Trim() ?? string.Empty;
@@ -184,12 +250,6 @@ public class DocumentExtrationTools
             return json;
         }
         return message;
-    }
-
-    private static string TruncateForPrompt(string text, int maxChars)
-    {
-        if (text.Length <= maxChars) return text;
-        return text.Substring(0, maxChars) + "\n...[TRUNCATED]";
     }
 
     private static string? TryExtractJson(string input)
@@ -207,14 +267,6 @@ public class DocumentExtrationTools
             }
             catch { }
         }
-        return null;
-    }
-
-    private static string? TryExtractAccountName(string host)
-    {
-        // typical host: account.blob.core.windows.net
-        var parts = host.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length > 0) return parts[0];
         return null;
     }
 }

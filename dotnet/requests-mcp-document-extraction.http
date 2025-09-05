@@ -1,0 +1,18 @@
+# MCP (Model Context Protocol) JSON-RPC Tests
+# Tests for the MCP server endpoints using JSON-RPC 2.0 protocol
+
+# Variables
+@baseServer = https://localhost:7077
+#@baseServer = https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/
+@apiKey = dev-api-key-12345
+
+### 
+POST {{baseServer}}/api/document/extract
+Content-Type: application/json
+Accept: application/json
+X-API-Key: {{apiKey}}
+
+{
+  "fileUri": "https://strutzscoagehk3t2e.blob.core.windows.net/documents/INVOICE-001.pdf",
+  "extractionPrompt": "Get the details of the provided invoice"
+}

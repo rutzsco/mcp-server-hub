@@ -47,26 +47,15 @@ namespace mcp_server_hub.Routes
             .WithDescription("Submit a transcription request with either a YouTube URL or an MP3 URL in the body.")
             .WithTags("Transcription");
 
-            // Document metadata endpoint (renamed from blob)
-            app.MapPost("/api/document/metadata", async (BlobMetadataRequest request, DocumentExtrationTools tools) =>
-            {
-                var result = await tools.GetBlobMetadata(request);
-                return Results.Json(result);
-            })
-            .WithName("GetDocumentMetadata")
-            .WithSummary("Get metadata for a document (blob) by URI")
-            .WithDescription("Provide a document HTTPS URI (can include SAS token) to retrieve metadata including size, type, etag, last modified and user metadata.")
-            .WithTags("Document");
-
-            // Document content extraction endpoint (renamed from blob)
+            // Document content extraction endpoint
             app.MapPost("/api/document/extract", async (BlobContentExtractionRequest request, DocumentExtrationTools tools) =>
             {
                 var result = await tools.ExtractBlobContent(request);
                 return Results.Json(result);
             })
             .WithName("ExtractDocumentContent")
-            .WithSummary("Extract key info from document text content using LLM")
-            .WithDescription("Downloads (truncated) document text content from storage and uses Azure OpenAI via Semantic Kernel to extract structured information.")
+            .WithSummary("Extract key info from PDF document using LLM vision")
+            .WithDescription("Downloads PDF document from storage, converts pages to images, and uses Azure OpenAI vision model via Semantic Kernel to extract structured information.")
             .WithTags("Document");
 
             return app;

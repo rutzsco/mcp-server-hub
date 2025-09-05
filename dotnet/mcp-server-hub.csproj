@@ -24,6 +24,13 @@
     <!-- Semantic Kernel core + Azure OpenAI connectors -->
     <PackageReference Include="Microsoft.SemanticKernel" Version="1.30.0" />
     <PackageReference Include="Microsoft.SemanticKernel.Connectors.AzureOpenAI" Version="1.30.0" />
+    <!-- PDF processing -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\DocumentAnalysisSystemPrompt.txt" />
   </ItemGroup>
 
 </Project>

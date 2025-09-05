@@ -6,6 +6,14 @@ using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
 using ModelContextProtocol.Server;
+using Microsoft.SemanticKernel;
+using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using mcp_server_hub.Utilities;
 
 namespace mcp_server_hub.Tools;
 
@@ -26,16 +34,30 @@ public record BlobMetadataResult(
     [property: Description("User-defined metadata key/value pairs")] System.Collections.Generic.IDictionary<string,string>? Metadata
 );
 
+// MaxBytes, Deployment and Raw removed – now provided via configuration (tool config)
+public record BlobContentExtractionRequest(
+    [property: Description("HTTPS URI of the blob (can include SAS token)")] string FileUri,
+    [property: Description("System prompt describing information to extract (default: extract key facts, entities, dates, amounts)")] string? ExtractionPrompt = null
+);
+
+public record BlobContentExtractionResult(
+    [property: Description("Original blob URI")] string BlobUri,
+    [property: Description("Truncated content length processed")] int ContentLength,
+    [property: Description("Model response with extracted info (JSON unless RawResponse=true in config)")] string Extraction
+);
+
 [McpServerToolType]
 public class DocumentExtrationTools
 {
-    private readonly Microsoft.Extensions.Configuration.IConfiguration _config;
-    private readonly Microsoft.Extensions.Logging.ILogger<DocumentExtrationTools> _logger;
+    private readonly IConfiguration _config;
+    private readonly ILogger<DocumentExtrationTools> _logger;
+    private readonly BlobStorageUtils _blobUtils;
 
-    public DocumentExtrationTools(Microsoft.Extensions.Configuration.IConfiguration config, Microsoft.Extensions.Logging.ILogger<DocumentExtrationTools> logger)
+    public DocumentExtrationTools(IConfiguration config, ILogger<DocumentExtrationTools> logger, BlobStorageUtils blobUtils)
     {
         _config = config;
         _logger = logger;
+        _blobUtils = blobUtils;
     }
 
     [McpServerTool, Description("Load Azure Blob Storage file metadata for a given blob URI (supports SAS or Managed Identity).")]
@@ -48,46 +70,11 @@ public class DocumentExtrationTools
         if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Only HTTPS URIs are supported", nameof(request.FileUri));
 
-        BlobClient blobClient;
         try
         {
-            // If the URI already contains a SAS (sig=) we can construct directly
-            if (uri.Query.Contains("sig=", StringComparison.OrdinalIgnoreCase))
-            {
-                blobClient = new BlobClient(uri);
-            }
-            else
-            {
-                // Use DefaultAzureCredential; allows Managed Identity / developer auth
-                // This requires that the configured storage account matches the URI host
-                var configuredAccountUrl = _config["AzureStorage:AccountUrl"] ?? _config["AZURE_STORAGE_ACCOUNT_URL"]; // e.g. https://acct.blob.core.windows.net
-                if (string.IsNullOrWhiteSpace(configuredAccountUrl))
-                {
-                    // Fallback: try anonymous (may work for public containers)
-                    blobClient = new BlobClient(uri);
-                }
-                else
-                {
-                    var configuredHost = new Uri(configuredAccountUrl).Host;
-                    if (!string.Equals(configuredHost, uri.Host, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.LogWarning("Configured storage account host {ConfiguredHost} does not match blob URI host {BlobHost}. Attempting anonymous access.", configuredHost, uri.Host);
-                        blobClient = new BlobClient(uri); // anonymous attempt
-                    }
-                    else
-                    {
-                        var credential = new DefaultAzureCredential();
-                        blobClient = new BlobClient(uri, credential);
-                    }
-                }
-            }
-
-            // Head request to fetch properties
-            var properties = await blobClient.GetPropertiesAsync().ConfigureAwait(false);
-            var props = properties.Value;
+            var (blobClient, props) = await _blobUtils.GetBlobPropertiesAsync(uri, _logger);
 
             // Extract container + blob path
-            // URI path starts with /container/segments...
             string? container = null;
             string? blobName = null;
             var segments = uri.AbsolutePath.Trim('/').Split('/', 2, StringSplitOptions.RemoveEmptyEntries);
@@ -122,6 +109,105 @@ public class DocumentExtrationTools
             _logger.LogError(ex, "Failed to retrieve blob metadata for {BlobUri}", request.FileUri);
             throw new InvalidOperationException($"Failed to retrieve blob metadata: {ex.Message}", ex);
         }
+    }
+
+    [McpServerTool, Description("Download blob text content and extract key information using an LLM (Azure OpenAI chat completion via Semantic Kernel). Large blobs truncated.")]
+    public async Task<BlobContentExtractionResult> ExtractBlobContent(BlobContentExtractionRequest request)
+    {
+        if (request is null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(request.FileUri)) throw new ArgumentException("FileUri is required", nameof(request.FileUri));
+
+        var uri = new Uri(request.FileUri);
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only HTTPS URIs are supported", nameof(request.FileUri));
+
+        try
+        {
+            var maxBytes = ResolveMaxBytes();
+            var (text, length) = await _blobUtils.DownloadTextAsync(uri, maxBytes, _logger);
+            if (length == 0) throw new InvalidOperationException("Blob is empty");
+
+            var systemPrompt = request.ExtractionPrompt ?? ResolveDefaultPrompt();
+            var extraction = await RunChatExtractionAsync(systemPrompt, text);
+            return new BlobContentExtractionResult(request.FileUri, length, extraction);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            throw new InvalidOperationException($"Blob not found: {request.FileUri}", ex);
+        }
+    }
+
+    private string ResolveDefaultPrompt() => _config["DocumentExtraction:Prompt"] ?? "You are a system that extracts structured key information from the provided document content. Return concise JSON with fields: entities (array of {type,name}), dates (ISO8601 strings), amounts (array of {currency?, amount, context}), summary (short), keyFacts (array of strings). If content appears binary or non-text, indicate that in a JSON error field.";
+
+    private int ResolveMaxBytes()
+    {
+        var val = _config["DocumentExtraction:MaxBytes"];
+        if (int.TryParse(val, out var parsed) && parsed > 0) return parsed;
+        return 200_000;
+    }
+
+    private bool UseRawResponse()
+    {
+        var flag = _config["DocumentExtraction:RawResponse"];
+        return bool.TryParse(flag, out var b) && b;
+    }
+
+    private async Task<string> RunChatExtractionAsync(string systemPrompt, string content)
+    {
+        var endpoint = _config["AzureOpenAI:Endpoint"] ?? _config["AZURE_OPENAI_ENDPOINT"];
+        var apiKey = _config["AzureOpenAI:ApiKey"] ?? _config["AZURE_OPENAI_API_KEY"];
+        var deployment = _config["DocumentExtraction:ChatDeployment"] ?? _config["AzureOpenAI:ChatDeployment"] ?? _config["AzureOpenAI:CompletionsDeployment"] ?? "gpt-4o";
+        var apiVersion = _config["AzureOpenAI:ApiVersion"] ?? "2024-10-01-preview";
+        if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(apiKey))
+            throw new InvalidOperationException("Azure OpenAI endpoint/api key not configured");
+
+        // Build kernel with Azure OpenAI chat completion service
+        var builder = Kernel.CreateBuilder();
+        builder.AddAzureOpenAIChatCompletion(
+            deploymentName: deployment,
+            endpoint: endpoint,
+            apiKey: apiKey,
+            apiVersion: apiVersion);
+        var kernel = builder.Build();
+        var chat = kernel.GetRequiredService<IChatCompletionService>();
+
+        var history = new ChatHistory();
+        history.AddSystemMessage(systemPrompt);
+        history.AddUserMessage($"Document content (may be truncated):\n```\n{TruncateForPrompt(content, 12000)}\n```\nProvide the extracted information now.");
+
+        var response = await chat.GetChatMessageContentAsync(history);
+        var message = response.Content?.Trim() ?? string.Empty;
+
+        if (!UseRawResponse())
+        {
+            var json = TryExtractJson(message) ?? message;
+            return json;
+        }
+        return message;
+    }
+
+    private static string TruncateForPrompt(string text, int maxChars)
+    {
+        if (text.Length <= maxChars) return text;
+        return text.Substring(0, maxChars) + "\n...[TRUNCATED]";
+    }
+
+    private static string? TryExtractJson(string input)
+    {
+        // Find first '{' and last '}' and attempt parse
+        var first = input.IndexOf('{');
+        var last = input.LastIndexOf('}');
+        if (first >= 0 && last > first)
+        {
+            var candidate = input.Substring(first, last - first + 1);
+            try
+            {
+                using var doc = JsonDocument.Parse(candidate);
+                return doc.RootElement.GetRawText();
+            }
+            catch { }
+        }
+        return null;
     }
 
     private static string? TryExtractAccountName(string host)

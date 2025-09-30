@@ -1,0 +1,226 @@
+### A2A Calculator Agent - HTTP Requests
+### Base URL - adjust port as needed
+@baseUrl = https://localhost:7077
+@a2aEndpoint = {{baseUrl}}/a2a
+
+### Health Check
+GET {{a2aEndpoint}}/health
+Accept: application/json
+
+###
+
+### Agent Info/Welcome
+GET {{a2aEndpoint}}
+Accept: application/json
+
+###
+
+### Agent Card (Well-known endpoint)
+GET {{a2aEndpoint}}/.well-known/agent.json
+Accept: application/json
+
+###
+
+### Calculator - Addition (5 + 3)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-add-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-1",
+    "message": {
+      "messageId": "msg-1",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-1",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "5 + 3"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Subtraction (10 - 4)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-sub-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-2",
+    "message": {
+      "messageId": "msg-2",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-2",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "10 - 4"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Multiplication (7 * 8)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-mul-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-3",
+    "message": {
+      "messageId": "msg-3",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-3",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "7 * 8"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Division (15 / 3)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-div-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-4",
+    "message": {
+      "messageId": "msg-4",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-4",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "15 / 3"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Decimal Numbers (10.5 - 2.3)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-decimal-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-5",
+    "message": {
+      "messageId": "msg-5",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-5",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "10.5 - 2.3"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Division by Zero (Error Case)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-error-1",
+  "method": "message/send",
+  "params": {
+    "id": "task-6",
+    "message": {
+      "messageId": "msg-6",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-6",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "10 / 0"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Calculator - Invalid Expression (Error Case)
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "calc-error-2",
+  "method": "message/send",
+  "params": {
+    "id": "task-7",
+    "message": {
+      "messageId": "msg-7",
+      "kind": "message",
+      "role": "user",
+      "contextId": "ctx-7",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "hello world"
+        }
+      ]
+    }
+  }
+}
+
+###
+
+### Task Query - Get Task Status
+POST {{a2aEndpoint}}
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": "query-1",
+  "method": "task/get",
+  "params": {
+    "id": "task-1"
+  }
+}
+
+###

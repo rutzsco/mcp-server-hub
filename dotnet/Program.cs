@@ -1,4 +1,5 @@
 using mcp_server_hub.Tools;
+using mcp_server_hub.Agents;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -102,6 +103,9 @@ app.MapGet("/api/healthz", () => Results.Ok("Healthy"));
 
 // Minimal API routes for tools
 app.MapToolRoutes();
+
+// A2A/ACA routes for calculator agent
+app.MapACARoutes();
 
 app.MapMcp();
 

@@ -82,6 +82,7 @@ builder.Services.AddScoped<TimeTools>();
 builder.Services.AddScoped<WeatherTools>();
 builder.Services.AddScoped<TranscriptionTools>();
 builder.Services.AddScoped<DocumentExtrationTools>();
+builder.Services.AddScoped<CalculatorA2ATools>();
 builder.Services.AddScoped<mcp_server_hub.Utilities.MediaUtils>();
 builder.Services.AddSingleton<mcp_server_hub.Utilities.BlobStorageUtils>();
 builder.Services.AddHttpClient();

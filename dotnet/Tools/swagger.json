@@ -1,0 +1,68 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "MCP Server Hub API",
+    "description": "REST endpoints for tools and health checks",
+    "version": "v1"
+  },
+  "servers": [
+    {
+      "url": "https://rutzsco-agent-mcp-server-hub-app.agreeablepond-d8205ba9.eastus2.azurecontainerapps.io/",
+      "description": "Production"
+    }
+  ],
+  "paths": {
+    "/api/calculator/calculate": {
+      "post": {
+        "tags": [
+          "Calculator"
+        ],
+        "summary": "Calculate arithmetic expressions using Calculator A2A agent",
+        "description": "Supports addition (+), subtraction (-), multiplication (*), and division (/). Examples: '5 + 3', '10.5 - 2.3', '7 * 8', '15 / 3'",
+        "operationId": "CalculateExpression",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalculateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CalculateRequest": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "description": "API Key required for secured endpoints",
+        "name": "X-API-Key",
+        "in": "header"
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ]
+}

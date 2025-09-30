@@ -1,0 +1,90 @@
+### Calculator MCP Tool - HTTP Requests
+### Tests the MCP tool that calls the Calculator A2A agent
+### Base URL
+@baseUrl = https://localhost:7077
+
+### Get Calculator Agent Info
+GET {{baseUrl}}/api/calculator/info
+Accept: application/json
+
+###
+
+### Calculate - Simple Addition
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "5 + 3"
+}
+
+###
+
+### Calculate - Subtraction
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "10 - 4"
+}
+
+###
+
+### Calculate - Multiplication
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "7 * 8"
+}
+
+###
+
+### Calculate - Division
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "15 / 3"
+}
+
+###
+
+### Calculate - Decimal Numbers
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "10.5 - 2.3"
+}
+
+###
+
+### Calculate - Complex Expression
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "25.5 * 4"
+}
+
+###
+
+### Calculate - Division by Zero (Error Case)
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "10 / 0"
+}
+
+###
+
+### Calculate - Invalid Expression (Error Case)
+POST {{baseUrl}}/api/calculator/calculate
+Content-Type: application/json
+
+{
+  "expression": "hello world"
+}
+
+###

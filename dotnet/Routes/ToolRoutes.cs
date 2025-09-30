@@ -58,7 +58,31 @@ namespace mcp_server_hub.Routes
             .WithDescription("Downloads PDF document from storage, converts pages to images, and uses Azure OpenAI vision model via Semantic Kernel to extract structured information.")
             .WithTags("Document");
 
+            // Calculator A2A agent - Calculate endpoint
+            app.MapPost("/api/calculator/calculate", async (CalculateRequest request, CalculatorA2ATools tools) =>
+            {
+                var result = await tools.Calculate(request.Expression);
+                return Results.Ok(new { expression = request.Expression, result });
+            })
+            .WithName("CalculateExpression")
+            .WithSummary("Calculate arithmetic expressions using Calculator A2A agent")
+            .WithDescription("Supports addition (+), subtraction (-), multiplication (*), and division (/). Examples: '5 + 3', '10.5 - 2.3', '7 * 8', '15 / 3'")
+            .WithTags("Calculator");
+
+            // Calculator A2A agent - Get agent info endpoint
+            app.MapGet("/api/calculator/info", async (CalculatorA2ATools tools) =>
+            {
+                var info = await tools.GetCalculatorAgentInfo();
+                return Results.Ok(info);
+            })
+            .WithName("GetCalculatorAgentInfo")
+            .WithSummary("Get information about the Calculator A2A agent")
+            .WithDescription("Returns agent capabilities, skills, supported modes, and other metadata.")
+            .WithTags("Calculator");
+
             return app;
         }
     }
+
+    public record CalculateRequest(string Expression);
 }

@@ -80,6 +80,24 @@ public class CalculatorAgent
             PushNotifications = false
         };
 
+        var calculatorSkill = new AgentSkill()
+        {
+            Id = "calculate",
+            Name = "Basic Arithmetic Calculator",
+            Description = "Performs basic arithmetic calculations including addition (+), subtraction (-), multiplication (*), and division (/).",
+            Tags = ["math", "calculator", "arithmetic"],
+            Examples = 
+            [
+                "5 + 3",
+                "10.5 - 2.3",
+                "7 * 8",
+                "15 / 3",
+                "Calculate 25 * 4"
+            ],
+            InputModes = ["text"],
+            OutputModes = ["text"]
+        };
+
         return Task.FromResult(new AgentCard()
         {
             Name = "Simple Calculator Agent",
@@ -89,7 +107,7 @@ public class CalculatorAgent
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
-            Skills = []
+            Skills = [calculatorSkill]
         });
     }
 

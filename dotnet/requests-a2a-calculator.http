@@ -1,10 +1,4 @@
-### A2A Calcula###
-
-### Agent Card (Well-known endpoint)
-GET {{baseUrl}}/.well-known/agent-card.json
-Accept: application/json
-
-###nt - HTTP Requests
+### A2A Calculator Agent - HTTP Requests
 ### Base URL - adjust port as needed
 @baseUrl = https://localhost:7077
 @a2aEndpoint = {{baseUrl}}/a2a

@@ -18,14 +18,14 @@ public class CalculatorAgent
     /// <summary>
     /// Handles incoming messages and performs calculations.
     /// </summary>
-    private Task<Message> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
+    private Task<A2AResponse> ProcessMessageAsync(MessageSendParams messageSendParams, CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
         {
-            return Task.FromCanceled<Message>(cancellationToken);
+            return Task.FromCanceled<A2AResponse>(cancellationToken);
         }
 
-        var userText = GetTextFromMessage(messageSendParams.Message);
+        var userText = messageSendParams.Message.Parts.OfType<TextPart>().FirstOrDefault()?.Text ?? "";
 
         Console.WriteLine($"[Calculator Agent] Received expression: {userText}");
 
@@ -34,33 +34,33 @@ public class CalculatorAgent
             var result = EvaluateExpression(userText);
             var responseText = $"{userText} = {result}";
 
-            var responseMessage = new Message
+            var responseMessage = new AgentMessage()
             {
                 Role = MessageRole.Agent,
                 MessageId = Guid.NewGuid().ToString(),
                 ContextId = messageSendParams.Message.ContextId,
-                Parts = [new TextPart { Text = responseText }]
+                Parts = [new TextPart() { Text = responseText }]
             };
 
             Console.WriteLine($"[Calculator Agent] Calculated result: {responseText}");
 
-            return Task.FromResult(responseMessage);
+            return Task.FromResult<A2AResponse>(responseMessage);
         }
         catch (Exception ex)
         {
             var errorText = $"Sorry, I couldn't calculate '{userText}'. Error: {ex.Message}. Please try a simple expression like '5 + 3' or '10 * 2'.";
 
-            var errorMessage = new Message
+            var errorMessage = new AgentMessage()
             {
                 Role = MessageRole.Agent,
                 MessageId = Guid.NewGuid().ToString(),
                 ContextId = messageSendParams.Message.ContextId,
-                Parts = [new TextPart { Text = errorText }]
+                Parts = [new TextPart() { Text = errorText }]
             };
 
             Console.WriteLine($"[Calculator Agent] Error: {ex.Message}");
 
-            return Task.FromResult(errorMessage);
+            return Task.FromResult<A2AResponse>(errorMessage);
         }
     }
 
@@ -74,7 +74,13 @@ public class CalculatorAgent
             return Task.FromCanceled<AgentCard>(cancellationToken);
         }
 
-        return Task.FromResult(new AgentCard
+        var capabilities = new AgentCapabilities()
+        {
+            Streaming = true,
+            PushNotifications = false
+        };
+
+        return Task.FromResult(new AgentCard()
         {
             Name = "Simple Calculator Agent",
             Description = "A basic calculator that can perform addition, subtraction, multiplication, and division. Send math expressions like '5 + 3' or '10 * 2'.",
@@ -82,17 +88,9 @@ public class CalculatorAgent
             Version = "1.0.0",
             DefaultInputModes = ["text"],
             DefaultOutputModes = ["text"],
-            Capabilities = new AgentCapabilities { Streaming = true }
+            Capabilities = capabilities,
+            Skills = []
         });
-    }
-
-    /// <summary>
-    /// Helper method to extract text from a message.
-    /// </summary>
-    private static string GetTextFromMessage(Message message)
-    {
-        var textPart = message.Parts.OfType<TextPart>().FirstOrDefault();
-        return textPart?.Text ?? "";
     }
 
     /// <summary>

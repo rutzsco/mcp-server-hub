@@ -20,6 +20,9 @@ namespace mcp_server_hub.Routes
 
             // Map the A2A endpoints - JSON-RPC endpoint at /a2a
             app.MapA2A(taskManager, "/a2a");
+            
+            // Map the well-known agent card endpoint
+            app.MapWellKnownAgentCard(taskManager, "/a2a");
 
             // Add a health check for the calculator agent
             app.MapGet("/a2a/health", () => Results.Ok(new
@@ -44,7 +47,7 @@ namespace mcp_server_hub.Routes
                 },
                 Endpoints = new
                 {
-                    AgentCard = "/a2a/.well-known/agent.json",
+                    AgentCard = "/.well-known/agent-card.json",
                     A2A = "/a2a (POST for JSON-RPC)",
                     Health = "/a2a/health"
                 }
